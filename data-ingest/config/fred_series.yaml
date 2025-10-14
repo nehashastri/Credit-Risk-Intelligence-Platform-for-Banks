@@ -1,0 +1,16 @@
+project_id: pipeline-882-team-project
+bucket_name: group11-ba882-fall25-data
+dataset_id: raw
+
+series:
+  - FEDFUNDS
+  - DGS2
+  - DGS10
+  - CPIAUCSL
+  - UNRATE
+  - TOTALSL
+  - MORTGAGE30US
+  - GDPC1
+  - USREC
+  - T5YIE
+  - DRCCLACBS
