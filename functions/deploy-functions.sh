@@ -10,7 +10,8 @@ gcloud functions deploy raw-fetch-fred \
   --source ./raw-fetch-fred \
   --region us-central1 \
   --allow-unauthenticated \
-  --set-env-vars FRED_API_KEY=$FRED_API_KEY \
+  --set-secrets FRED_API_KEY=FRED_API_Key:latest \
+  --set-env-vars BUCKET_NAME=group11-ba882-fall25-data \
   --memory 512MB
 
 echo "Deploying raw-upload-fred..."
