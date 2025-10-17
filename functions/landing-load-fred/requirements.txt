@@ -1,0 +1,10 @@
+functions-framework==3.*
+google-cloud-secret-manager
+duckdb==1.3.2
+pandas
+pyarrow
+requests
+google-cloud-storage
+google-cloud-bigquery
+pyyaml
+tqdm

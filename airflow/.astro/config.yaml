@@ -1,2 +1,6 @@
 project:
     name: airflow
+
+mounts:
+  - source: airflow/include/service_account.json
+    target: /usr/local/airflow/include/service_account.json
