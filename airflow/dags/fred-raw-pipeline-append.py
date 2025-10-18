@@ -44,8 +44,8 @@ def fred_raw_pipeline_append():
     def load(extract_payload: dict) -> dict:
         """Call Cloud Function to load newly created GCS CSV into BigQuery."""
         if not extract_payload.get("gcs_path"):
-        print(f"No new data to load for {extract_payload.get('series_id')}")
-        return {"status": "skipped"}
+            print(f"No new data to load for {extract_payload.get('series_id')}")
+            return {"status": "skipped"}
         url = "https://us-central1-pipeline-882-team-project.cloudfunctions.net/raw-upload-fred"
         series_id = extract_payload["series_id"]
         resp = invoke_function(url, params={"series_id": series_id})
