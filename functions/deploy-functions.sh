@@ -10,7 +10,8 @@ gcloud functions deploy raw-fetch-fred \
   --source ./raw-fetch-fred \
   --region us-central1 \
   --allow-unauthenticated \
-  --set-env-vars FRED_API_KEY=$FRED_API_KEY \
+  --set-secrets FRED_API_KEY=FRED_API_Key:latest \
+  --set-env-vars BUCKET_NAME=group11-ba882-fall25-data \
   --memory 512MB
 
 echo "Deploying raw-upload-fred..."
@@ -23,3 +24,25 @@ gcloud functions deploy raw-upload-fred \
   --region us-central1 \
   --allow-unauthenticated \
   --memory 512MB
+
+echo "Deploying landing-load-fred..."
+gcloud functions deploy landing-load-fred \
+  --gen2 \
+  --runtime python312 \
+  --trigger-http \
+  --entry-point task \
+  --source ./landing-load-fred \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --memory 512MB
+
+echo "Deploying raw-fetch-yfinance..."
+gcloud functions deploy raw-fetch-yfinance \
+    --gen2 \
+    --runtime python312 \
+    --trigger-http \
+    --entry-point task \
+    --source ./raw-fetch-yfinance \
+    --region us-central1 \
+    --allow-unauthenticated \
+    --memory 512MB

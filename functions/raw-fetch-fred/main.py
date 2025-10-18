@@ -6,9 +6,6 @@ from datetime import datetime
 import os
 import json
 
-PROJECT_ID = 'pipeline-882-team-project'
-BUCKET_NAME = 'group11-ba882-fall25-data'
-
 @functions_framework.http
 def task(request):
     """Fetch a FRED series and upload as CSV to GCS."""
