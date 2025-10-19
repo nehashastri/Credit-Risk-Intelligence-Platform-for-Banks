@@ -3,14 +3,12 @@ import os
 import functions_framework
 from google.cloud import bigquery
 
-# 로컬 개발 편의: .env 읽기 (배포 환경에서는 --set-env-vars 사용)
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass
 
-# ------- 환경 변수 -------
 GCP_PROJECT_ID  = os.getenv("GCP_PROJECT_ID")          # e.g. pipeline-882-team-project
 RAW_DATASET     = os.getenv("RAW_DATASET", "raw")
 RAW_TABLE       = os.getenv("RAW_TABLE", "raw_news_articles")
@@ -20,7 +18,6 @@ RAW_FQN         = f"`{GCP_PROJECT_ID}.{RAW_DATASET}.{RAW_TABLE}`"
 LANDING_ART     = f"`{GCP_PROJECT_ID}.{LANDING_DATASET}.news_articles`"
 LANDING_FACT    = f"`{GCP_PROJECT_ID}.{LANDING_DATASET}.fact_news_relevance_scores`"
 
-# ------- SQL: DDL 보장 -------
 DDL_SQL = f"""
 CREATE SCHEMA IF NOT EXISTS `{GCP_PROJECT_ID}.{LANDING_DATASET}`;
 
