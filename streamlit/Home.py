@@ -169,6 +169,7 @@ def main():
     # Header
     st.markdown('<h1 class="main-header">🏦 Credit Risk Intelligence Platform</h1>', unsafe_allow_html=True)
     st.markdown("### Phase 1: Data Integration & Analysis Dashboard")
+    st.markdown('#### Data Analytics Pipeline Group 11: Donghyeon Na, Yashna Meher, Neha Shastri, Tharfeed Ahmed Unus')
     
     # Sidebar navigation
     st.sidebar.title("📋 Navigation")
@@ -303,7 +304,7 @@ def show_home_page(bq_connector, connection_status):
     st.markdown("""
     <div style='text-align: center; color: #666; margin-top: 2rem;'>
         <p>🏦 Credit Risk Intelligence Platform | Phase 1 | Built with Streamlit</p>
-        <p><small>📝 TODO: Add GitHub repo link | 🔐 Configure BigQuery credentials | 📊 Add custom visualizations</small></p>
+        <p><small>📝 Data Analytics Pipeline | Group 11 | Donghyeon, Neha, Tharfeed, Yashna | </small></p>
     </div>
     """, unsafe_allow_html=True)
 
