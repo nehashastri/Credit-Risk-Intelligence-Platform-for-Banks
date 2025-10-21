@@ -304,7 +304,7 @@ def show_home_page(bq_connector, connection_status):
     st.markdown("""
     <div style='text-align: center; color: #666; margin-top: 2rem;'>
         <p>🏦 Credit Risk Intelligence Platform | Phase 1 | Built with Streamlit</p>
-        <p><small>📝 TODO: Add GitHub repo link | 🔐 Configure BigQuery credentials | 📊 Add custom visualizations</small></p>
+        <p><small>📝 Data Analytics Pipeline | Group 11 | Donghyeon, Neha, Tharfeed, Yashna | </small></p>
     </div>
     """, unsafe_allow_html=True)
 
