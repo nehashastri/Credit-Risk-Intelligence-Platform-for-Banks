@@ -169,6 +169,7 @@ def main():
     # Header
     st.markdown('<h1 class="main-header">🏦 Credit Risk Intelligence Platform</h1>', unsafe_allow_html=True)
     st.markdown("### Phase 1: Data Integration & Analysis Dashboard")
+    st.markdown('#### Data Analytics Pipeline Group 11: Donghyeon Na, Yashna Meher, Neha Shastri, Tharfeed Ahmed Unus')
     
     # Sidebar navigation
     st.sidebar.title("📋 Navigation")
