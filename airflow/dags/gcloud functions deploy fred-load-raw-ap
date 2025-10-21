@@ -1,0 +1,8 @@
+gcloud functions deploy fred-load-raw-append \
+  --runtime python311 \
+  --trigger-http \
+  --allow-unauthenticated \
+  --region=us-central1 \
+  --entry-point=task \
+  --source= fred-load-raw-pipeline-append.py\
+  --set-env-vars PROJECT_ID=pipeline-882-team-project,DATASET_ID=raw,BUCKET_NAME=group11-ba882-fall25-data
