@@ -1,0 +1,23 @@
+# include/queries.yaml
+defaults:
+  days: 3          # Default value if an individual preset does not specify "days"
+  max_results: 20  # Default value if an individual preset does not specify "max_results"
+
+presets:
+  - topic: fed_policy
+    query: "Federal Reserve FOMC rate decision OR Fed policy"
+
+  - topic: cpi
+    query: "US CPI inflation BLS report"
+
+  - topic: labor
+    query: "US unemployment labor market JOLTS NFP"
+
+  - topic: markets
+    query: "US stock market treasury yields credit spreads"
+
+  - topic: energy
+    query: "oil prices gasoline diesel energy market"
+
+  - topic: real_estate
+    query: "US housing market mortgage delinquency"

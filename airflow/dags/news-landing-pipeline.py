@@ -1,28 +1,38 @@
-from airflow import DAG
+# dags/news-landing-pipeline.py
 from datetime import datetime, timedelta
-from airflow.providers.standard.operators.python import PythonOperator
-from airflow.models import Variable
-import os, requests
+from airflow import DAG
+from airflow.providers.google.cloud.operators.functions import CloudFunctionInvokeFunctionOperator
 
-def call_landing():
-    url = Variable.get("LANDING_LOAD_NEWS_URL", default_var=os.getenv("LANDING_LOAD_NEWS_URL", "")).strip()
-    if not url:
-        raise RuntimeError("LANDING_LOAD_NEWS_URL not set (Airflow Variable or env)")
-    r = requests.post(url, json={}, timeout=180)
-    print(f"[landing] status={r.status_code}, body={r.text[:300]}")
-    if r.status_code not in (200, 204):
-        raise RuntimeError(f"landing-load-news failed: {r.status_code} {r.text}")
+PROJECT_ID = "pipeline-882-team-project"
+REGION = "us-central1"
+FUNCTION_NAME = "landing-load-news"  # ← The Cloud Function deployed for the landing process
+
+default_args = {
+    "owner": "airflow",
+    "depends_on_past": False,
+    "email_on_failure": False,
+    "email_on_retry": False,
+    "retries": 1,
+    "retry_delay": timedelta(minutes=5),
+}
 
 with DAG(
     dag_id="news_landing_pipeline",
+    default_args=default_args,
+    description="Load data from raw → landing for news and aggregate the last 7 days",
+    schedule="30 8 * * *",  # Recommended: run 15 minutes after the raw pipeline (08:15 UTC)
     start_date=datetime(2025, 1, 1),
-    schedule="30 8 * * *",             
     catchup=False,
-    default_args={"retries": 1, "retry_delay": timedelta(minutes=5)},
-    tags=["news","landing"],
+    tags=["news", "landing", "bigquery"],
 ) as dag:
 
-    landing_load = PythonOperator(
-        task_id="invoke_landing_load_news",
-        python_callable=call_landing,
+    # Task to invoke the Cloud Function (landing-load-news)
+    trigger_landing_load = CloudFunctionInvokeFunctionOperator(
+        task_id="trigger_landing_load",
+        project_id=PROJECT_ID,
+        location=REGION,
+        function_id=FUNCTION_NAME,
+        input_data={},  # HTTP request body (empty JSON)
     )
+
+    trigger_landing_load
