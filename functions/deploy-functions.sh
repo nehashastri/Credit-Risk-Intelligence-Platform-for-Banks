@@ -46,3 +46,16 @@ gcloud functions deploy raw-fetch-yfinance \
     --region us-central1 \
     --allow-unauthenticated \
     --memory 512MB
+
+echo "Deploying raw-fetch-news..."
+source ../.env
+gcloud functions deploy raw-fetch-news \
+  --gen2 \
+  --runtime python312 \
+  --trigger-http \
+  --entry-point raw_fetch_news \
+  --source ./raw-fetch-news \
+  --region us-central1 \
+  --allow-unauthenticated \
+  --set-env-vars GCP_PROJECT_ID=$GCP_PROJECT_ID,RAW_DATASET=$RAW_DATASET,RAW_TABLE=$RAW_TABLE,LANDING_DATASET=$LANDING_DATASET,TAVILY_API_KEY=$TAVILY_API_KEY \
+  --memory 512MB
