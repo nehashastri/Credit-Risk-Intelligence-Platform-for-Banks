@@ -1,11 +1,4 @@
 functions-framework==3.*
-google-cloud-bigquery
-yfinance
-pandas
-google-cloud-secret-manager
-duckdb==1.3.2
-pyarrow
-requests
-google-cloud-storage
-pyyaml
-tqdm
+yfinance==0.2.40
+pandas==2.2.3
+requests-cache==1.2.1
