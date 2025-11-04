@@ -1,0 +1,35 @@
+# Credit Risk Intelligence Platform - Requirements
+# Core dependencies for the Streamlit application
+
+# Web framework
+streamlit>=1.28.0
+
+# Data processing and analysis
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Visualization
+plotly>=5.15.0
+
+# Google Cloud Platform
+google-cloud-bigquery>=3.11.0
+google-auth>=2.17.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.1.0
+db-dtypes>=1.1.0
+
+# Financial data
+yfinance>=0.2.18
+
+# Additional utilities
+python-dateutil>=2.8.2
+pytz>=2023.3
+
+# Development and testing (optional)
+pytest>=7.4.0
+black>=23.7.0
+flake8>=6.0.0
+
+# Deployment (optional)
+gunicorn>=21.2.0
+docker>=6.1.0
