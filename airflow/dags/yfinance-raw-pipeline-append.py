@@ -7,7 +7,6 @@ from airflow.sdk import dag, task, get_current_context
 from datetime import datetime
 import requests
 import yaml
-import os
 
 # --------------------------------------------------
 # Utility Function
@@ -74,22 +73,18 @@ def yfinance_raw_pipeline_append():
     # -------------------------
     # Task 2: Load (Append to BigQuery)
     # -------------------------
-    @task(retries=2, retry_delay=60)
+    @task(retries=10, retry_delay=60)
     def load_yfinance_data_to_raw(extract_payload: dict) -> dict:
         """
-        Append uploaded CSV into BigQuery (sector_equity_features_2).
+        Append uploaded CSV into BigQuery (raw.yfinance_table).
         Calls Cloud Function: raw_upload_yfinance_append
         """
         ticker = extract_payload.get("ticker")
+        status = extract_payload.get("status", "").lower()
 
-        if (
-            not extract_payload.get("gcs_path")
-            or "no_data" in str(extract_payload).lower()
-            or "skipped" in str(extract_payload).lower()
-            or "empty" in str(extract_payload).lower()
-            or extract_payload.get("status") in ["no_data", "skipped"]
-        ):
-            print(f"⏩ Skipping load — no valid data for {ticker}")
+        # Skip conditions
+        if status in ["no_data", "skipped", "up_to_date"] or not extract_payload.get("gcs_path"):
+            print(f"⏩ Skipping load — no valid data for {ticker} (status={status})")
             return {"ticker": ticker, "status": "skipped"}
 
         url = (
@@ -97,7 +92,7 @@ def yfinance_raw_pipeline_append():
             "raw_upload_yfinance_append"
         )
 
-        print(f"⬆️ Uploading data for {ticker} to BigQuery → sector_equity_features_2")
+        print(f"⬆️ Uploading data for {ticker} to BigQuery → raw.yfinance_table")
         resp = invoke_function(url, params={"ticker": ticker})
 
         if resp.get("error"):
@@ -121,7 +116,6 @@ def yfinance_raw_pipeline_append():
         """
         Run landing_load_yfinance_append Cloud Function only if any ticker had new data.
         """
-        # Check if any ticker actually uploaded new rows
         new_data = any(
             r.get("status") == "success" and r.get("rows_uploaded", 0) > 0
             for r in load_results

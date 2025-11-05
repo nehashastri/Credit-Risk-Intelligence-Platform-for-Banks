@@ -1,10 +1,9 @@
 import functions_framework
 import yfinance as yf
 import pandas as pd
-from google.cloud import storage
+from google.cloud import storage, bigquery
 from datetime import datetime, timedelta
 import os
-from io import StringIO
 
 PROJECT_ID = "pipeline-882-team-project"
 BUCKET_NAME = "group11-ba882-fall25-data"
@@ -12,8 +11,8 @@ BUCKET_NAME = "group11-ba882-fall25-data"
 @functions_framework.http
 def raw_fetch_yfinance_append(request):
     """
-    Fetches daily close and volume data for the given ticker from Yahoo Finance.
-    Appends data for yesterday only and uploads to GCS.
+    Fetches new daily close and volume data for the given ticker from Yahoo Finance.
+    Determines the last date in BigQuery (raw.yfinance_table) and fetches data from that date onward.
     
     Request args:
       ?ticker=AAPL
@@ -24,14 +23,45 @@ def raw_fetch_yfinance_append(request):
     if not ticker:
         return {"error": "Missing ticker parameter"}, 400
 
-    # Determine yesterday's date (UTC)
-    end_date = datetime.utcnow().date()
-    start_date = end_date - timedelta(days=1)
-
-    print(f"Fetching yfinance data for {ticker} from {start_date} to {end_date}")
+    print(f"🔹 Starting yfinance append for ticker: {ticker}")
 
     try:
-        # Fetch 1 day of data
+        # Initialize BigQuery client
+        bq_client = bigquery.Client(project=PROJECT_ID)
+
+        # Query to get the most recent date for this ticker
+        query = f"""
+            SELECT MAX(date) AS last_date
+            FROM `pipeline-882-team-project.raw.yfinance_table`
+            WHERE ticker = @ticker
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("ticker", "STRING", ticker)]
+        )
+
+        query_job = bq_client.query(query, job_config=job_config)
+        result = query_job.result()
+        last_date_row = list(result)[0]
+        last_date = last_date_row.last_date
+
+        if last_date is None:
+            print("No previous data found — fetching last 30 days.")
+            start_date = datetime.utcnow().date() - timedelta(days=30)
+        else:
+            # Start from the next day after last_date
+            start_date = last_date + timedelta(days=1)
+
+        end_date = datetime.utcnow().date()
+        print(f"Fetching yfinance data for {ticker} from {start_date} to {end_date}")
+
+        if start_date >= end_date:
+            return {
+                "ticker": ticker,
+                "status": "up_to_date",
+                "message": f"No new data since {last_date}"
+            }, 200
+
+        # Fetch data
         df = yf.download(
             tickers=ticker,
             start=start_date.strftime("%Y-%m-%d"),
@@ -41,24 +71,23 @@ def raw_fetch_yfinance_append(request):
         )
 
         if df.empty:
-            return {"ticker": ticker, "status": "no_data", "message": "No data returned for yesterday"}, 200
+            print("No new data returned by yfinance.")
+            return {"ticker": ticker, "status": "no_data"}, 200
 
-
+        # Clean and format
         df.reset_index(inplace=True)
         df.rename(columns={
             "Date": "date",
             "Close": "close_price",
             "Volume": "volume"
         }, inplace=True)
-
-        df["date"] = df["date"].dt.strftime("%Y-%m-%d")
+        df["date"] = df["date"].dt.date
         df["ticker"] = ticker
         df["ingest_timestamp"] = datetime.utcnow().isoformat()
 
         # Upload to GCS
         storage_client = storage.Client()
         bucket = storage_client.bucket(BUCKET_NAME)
-
         ts = datetime.utcnow().strftime("%Y%m%dT%H%M%S")
         blob_path = f"yfinance/raw/{ticker}/{ticker}_{ts}.csv"
 
@@ -67,16 +96,16 @@ def raw_fetch_yfinance_append(request):
             content_type="text/csv"
         )
 
-        print(f"Uploaded {len(df)} rows to {blob_path}")
+        print(f"✅ Uploaded {len(df)} new rows to {blob_path}")
 
         return {
             "ticker": ticker,
             "rows_uploaded": len(df),
-            "first_date": df["date"].min(),
-            "last_date": df["date"].max(),
+            "first_date": str(df['date'].min()),
+            "last_date": str(df['date'].max()),
             "gcs_path": blob_path
         }, 200
 
     except Exception as e:
-        print(f"Error fetching data for {ticker}: {e}")
+        print(f"❌ Error fetching data for {ticker}: {e}")
         return {"error": str(e)}, 500
