@@ -53,7 +53,7 @@ SELECT
 
   CURRENT_TIMESTAMP() AS load_timestamp
 
-FROM `pipeline-882-team-project.raw.sector_equity_features_2`
+FROM `pipeline-882-team-project.raw.yfinance_table`
 GROUP BY date
 ORDER BY date
 """
@@ -66,7 +66,7 @@ def landing_load_yfinance_append(request):
     """
     PROJECT_ID = "pipeline-882-team-project"
     DATASET_ID = "landing"
-    TABLE_NAME = "fact_sector_prices_volumes_append"
+    TABLE_NAME = "yfinance_table"
 
     try:
         full_table_id = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME}"

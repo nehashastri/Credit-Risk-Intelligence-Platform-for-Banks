@@ -57,7 +57,7 @@ def yfinance_raw_pipeline_append():
     # Task 1: Extract (Fetch + Upload to GCS)
     # -------------------------
     @task
-    def extract(ticker: str) -> dict:
+    def extract_daily_yfinance_data(ticker: str) -> dict:
         """Fetch the latest YFinance data for a ticker and upload it to GCS."""
         url = (
             "https://us-central1-pipeline-882-team-project.cloudfunctions.net/"
@@ -75,7 +75,7 @@ def yfinance_raw_pipeline_append():
     # Task 2: Load (Append to BigQuery)
     # -------------------------
     @task(retries=2, retry_delay=60)
-    def load(extract_payload: dict) -> dict:
+    def load_yfinance_data_to_raw(extract_payload: dict) -> dict:
         """
         Append uploaded CSV into BigQuery (sector_equity_features_2).
         Calls Cloud Function: raw_upload_yfinance_append
@@ -117,7 +117,7 @@ def yfinance_raw_pipeline_append():
     # Task 3: Load into Landing (only if new data exists)
     # -------------------------
     @task
-    def load_landing(load_results: list) -> dict:
+    def load_yfinance_raw_to_landing(load_results: list) -> dict:
         """
         Run landing_load_yfinance_append Cloud Function only if any ticker had new data.
         """
@@ -145,9 +145,9 @@ def yfinance_raw_pipeline_append():
     # -------------------------
     # Parallel & Conditional Flow
     # -------------------------
-    extract_results = extract.expand(ticker=tickers)
-    load_results = load.expand(extract_payload=extract_results)
-    load_landing(load_results)
+    extract_results = extract_daily_yfinance_data.expand(ticker=tickers)
+    load_results = load_yfinance_data_to_raw.expand(extract_payload=extract_results)
+    load_yfinance_raw_to_landing(load_results)
 
 # -------------------------
 # Instantiate DAG

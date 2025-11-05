@@ -61,7 +61,7 @@ def landing_load_sector_equity(request):
     """
     PROJECT_ID = "pipeline-882-team-project"
     DATASET_ID = "landing"
-    TABLE_NAME = "fact_sector_prices_volumes"
+    TABLE_NAME = "yfinance_table"
 
     try:
         full_table_id = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME}"

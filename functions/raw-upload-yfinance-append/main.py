@@ -7,7 +7,7 @@ from io import StringIO
 PROJECT_ID = "pipeline-882-team-project"
 BUCKET_NAME = "group11-ba882-fall25-data"
 DATASET_ID = "raw"
-TABLE_ID = "sector_equity_features_2"
+TABLE_ID = "yfinance_table"
 
 @functions_framework.http
 def raw_upload_yfinance_append(request):
@@ -63,22 +63,13 @@ def raw_upload_yfinance_append(request):
             print(f"⚠️ No valid rows left after cleanup for {ticker}")
             return {"ticker": ticker, "message": "No valid rows after cleanup"}, 200
 
-        # --- Add load metadata ---
-        df["load_timestamp"] = datetime.utcnow().isoformat()
-        df["source_path"] = blob_path
-
         # --- Ensure correct schema alignment ---
         expected_cols = [
             "date",
             "ticker",
-            "open_price",
-            "high_price",
-            "low_price",
             "close_price",
             "volume",
-            "ingest_timestamp",
-            "load_timestamp",
-            "source_path",
+            "ingest_timestamp"
         ]
         for col in expected_cols:
             if col not in df.columns:
@@ -94,14 +85,9 @@ def raw_upload_yfinance_append(request):
             schema=[
                 bigquery.SchemaField("date", "DATE"),
                 bigquery.SchemaField("ticker", "STRING"),
-                bigquery.SchemaField("open_price", "FLOAT"),
-                bigquery.SchemaField("high_price", "FLOAT"),
-                bigquery.SchemaField("low_price", "FLOAT"),
                 bigquery.SchemaField("close_price", "FLOAT"),
                 bigquery.SchemaField("volume", "FLOAT"),
-                bigquery.SchemaField("ingest_timestamp", "TIMESTAMP"),
-                bigquery.SchemaField("load_timestamp", "TIMESTAMP"),
-                bigquery.SchemaField("source_path", "STRING"),
+                bigquery.SchemaField("ingest_timestamp", "TIMESTAMP")
             ],
         )
 

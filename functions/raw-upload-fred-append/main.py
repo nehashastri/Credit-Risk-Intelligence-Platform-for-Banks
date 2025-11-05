@@ -28,7 +28,7 @@ def raw_upload_fred_append(request):
     if not series_id:
         return ("Missing series_id parameter", 400)
 
-    file_name = f"fred/raw/{series_id}/{series_id}_latest.csv"
+    file_name = f"fred/raw/{series_id}/{series_id}_{ts}.csv"
     uri = f"gs://{BUCKET_NAME}/{file_name}"
 
     print(f"🚀 Starting load for {series_id} from {uri}")
