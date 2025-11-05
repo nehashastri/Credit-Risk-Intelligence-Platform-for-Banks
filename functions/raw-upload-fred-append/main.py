@@ -1,8 +1,8 @@
 import functions_framework
-from google.cloud import bigquery
+from google.cloud import bigquery, storage
 from google.api_core.exceptions import NotFound
-import os
-import json
+from datetime import datetime
+import os, json
 
 PROJECT_ID = os.getenv("PROJECT_ID", "pipeline-882-team-project")
 DATASET_ID = os.getenv("DATASET_ID", "raw")
@@ -14,24 +14,27 @@ def raw_upload_fred_append(request):
     Triggered via HTTP by Airflow DAG.
     Appends the latest FRED CSV (already uploaded to GCS) into BigQuery.
     """
-
     request_json = request.get_json(silent=True)
     request_args = request.args
 
-    # Get series_id (from ?series_id=XYZ)
-    series_id = None
-    if request_json and "series_id" in request_json:
-        series_id = request_json["series_id"]
-    elif request_args and "series_id" in request_args:
-        series_id = request_args["series_id"]
-
+    series_id = (
+        (request_json or {}).get("series_id")
+        or (request_args or {}).get("series_id")
+    )
     if not series_id:
         return ("Missing series_id parameter", 400)
 
-    file_name = f"fred/raw/{series_id}/{series_id}_{ts}.csv"
-    uri = f"gs://{BUCKET_NAME}/{file_name}"
+    # 🔹 Find latest CSV file in GCS
+    storage_client = storage.Client()
+    bucket = storage_client.bucket(BUCKET_NAME)
+    prefix = f"fred/raw/{series_id}/"
+    blobs = list(bucket.list_blobs(prefix=prefix))
+    if not blobs:
+        return (f"No CSV files found in GCS for {series_id}", 404)
 
-    print(f"🚀 Starting load for {series_id} from {uri}")
+    latest_blob = max(blobs, key=lambda b: b.time_created)
+    uri = f"gs://{BUCKET_NAME}/{latest_blob.name}"
+    print(f"📦 Found latest CSV for {series_id}: {uri}")
 
     client = bigquery.Client(project=PROJECT_ID)
     dataset_ref = client.dataset(DATASET_ID)
@@ -59,7 +62,7 @@ def raw_upload_fred_append(request):
         client.create_table(bigquery.Table(table_id, schema=schema))
         print(f"✅ Created table: {table_id}")
 
-    # Load CSV from GCS → BQ append
+    # Load CSV from GCS → BigQuery
     job_config = bigquery.LoadJobConfig(
         source_format=bigquery.SourceFormat.CSV,
         skip_leading_rows=1,
@@ -70,6 +73,15 @@ def raw_upload_fred_append(request):
     print(f"📥 Loading data from {uri} into {table_id}...")
     load_job = client.load_table_from_uri(uri, table_id, job_config=job_config)
     load_job.result()
+    print(f"✅ Appended {load_job.output_rows} rows for {series_id}.")
 
-    print(f"✅ Successfully appended {series_id} data.")
-    return (json.dumps({"status": "success", "series_id": series_id}), 200)
+    return (
+        json.dumps({
+            "status": "success",
+            "series_id": series_id,
+            "rows_appended": load_job.output_rows,
+            "gcs_file": latest_blob.name,
+            "bq_table": table_id,
+        }),
+        200,
+    )
