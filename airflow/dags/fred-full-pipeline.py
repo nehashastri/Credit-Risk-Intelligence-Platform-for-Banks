@@ -58,7 +58,7 @@ def fred_full_pipeline():
         series_list = yaml.safe_load(f)["series"]
 
     @task
-    def extract(series_id: str) -> dict:
+    def extract_fred_data(series_id: str) -> dict:
         """Fetch new FRED data to GCS."""
         url = "https://us-central1-pipeline-882-team-project.cloudfunctions.net/raw-fetch-fred-append"
         ctx = get_current_context()
@@ -76,10 +76,10 @@ def fred_full_pipeline():
             raise
 
     @task
-    def load_to_bq(extract_payload: dict):
+    def load_fred_data_to_bigquery(extract_payload: dict):
         """Append CSVs into BigQuery raw tables."""
         series_id = extract_payload["series_id"]
-        url = "https://us-central1-pipeline-882-team-project.cloudfunctions.net/raw-upload-fred-append"
+        url = "https://us-central1-pipeline-882-team-project.cloudfunctions.net/raw_upload_fred_append"
 
         # Skip if no new data fetched for this series
         if not extract_payload.get("new_data"):
@@ -98,7 +98,7 @@ def fred_full_pipeline():
             raise
 
     @task(trigger_rule="all_done")
-    def trigger_landing(load_results: list):
+    def load_fred_raw_to_landing(load_results: list):
         """
         Invoke 'landing-load-fred' Cloud Function *only if*
         any raw tables were updated.
@@ -123,8 +123,8 @@ def fred_full_pipeline():
             raise
 
     # Pipeline structure
-    extract_results = extract.expand(series_id=series_list)
-    load_results = load_to_bq.expand(extract_payload=extract_results)
-    trigger_landing(load_results)
+    extract_results = extract_fred_data.expand(series_id=series_list)
+    load_results = load_fred_data_to_bigquery.expand(extract_payload=extract_results)
+    load_fred_raw_to_landing(load_results)
 
 fred_full_pipeline()

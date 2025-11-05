@@ -1,0 +1,11 @@
+tickers:
+  - XLY   # Consumer Discretionary
+  - XLP   # Consumer Staples
+  - XLF   # Financials
+  - XLK   # Technology
+  - XLE   # Energy
+  - XLI   # Industrials
+  - XLU   # Utilities
+  - XLV   # Health Care
+  - XLB   # Materials
+  - XLC   # Communication Services
