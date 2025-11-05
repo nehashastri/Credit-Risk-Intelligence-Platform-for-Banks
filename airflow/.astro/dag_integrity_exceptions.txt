@@ -1,1 +1,3 @@
 # Add dag files to exempt from parse test below. ex: dags/<test-file>
+
+dags/recession-simulation-stress-test.py
