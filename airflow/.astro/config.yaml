@@ -1,3 +1,4 @@
+# airflow/.astro/config.yaml
 mounts:
   - source: airflow/include/service_account.json
     target: /usr/local/airflow/include/service_account.json
@@ -7,9 +8,10 @@ project:
 
 deploy:
   include:
-    - "dags/**/*.py"              
-    - "include/config/**"         
-    - "include/service_account.json" 
+    - "dags/**/*.py"            
+    - "dags/include/**"         
+    - "include/config/**"       
+    - "include/service_account.json"
 
 services:
   ui:
@@ -23,7 +25,6 @@ services:
       - AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
       - AIRFLOW__WEBSERVER__COOKIE_SECURE=True
       - AIRFLOW__WEBSERVER__COOKIE_SAMESITE=None
-
   api:
     command: api
     ports:
@@ -34,16 +35,12 @@ services:
       - AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
       - AIRFLOW__WEBSERVER__COOKIE_SECURE=True
       - AIRFLOW__WEBSERVER__COOKIE_SAMESITE=None
-
   scheduler:
     command: scheduler
-
   triggerer:
     command: triggerer
-
   dag-processor:
     command: dag-processor
-
   postgres:
     image: postgres:12
     ports:
