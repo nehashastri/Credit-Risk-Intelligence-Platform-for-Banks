@@ -5,6 +5,12 @@ mounts:
 project:
   name: airflow
 
+deploy:
+  include:
+    - "dags/**/*.py"              
+    - "include/config/**"         
+    - "include/service_account.json" 
+
 services:
   ui:
     command: ui

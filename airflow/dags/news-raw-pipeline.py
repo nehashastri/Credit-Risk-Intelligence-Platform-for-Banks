@@ -16,13 +16,8 @@ ET = pendulum.timezone("America/New_York")
 # Helper: locate the YAML query configuration file
 # --------------------------------------------------
 def _queries_yaml_path() -> str:
-    """
-    Returns the absolute path to the queries.yaml configuration file.
-    Adjusted for the directory structure:
-    airflow/dags/include/config/queries.yaml
-    """
-    here = os.path.dirname(os.path.abspath(__file__))  # current: airflow/dags/
-    return os.path.normpath(os.path.join(here, "include", "config", "queries.yaml"))
+    here = os.path.dirname(os.path.abspath(__file__))  # airflow/dags/
+    return os.path.normpath(os.path.join(here, "..", "include", "config", "queries.yaml"))
 
 # --------------------------------------------------
 # Helper: load query presets from YAML
