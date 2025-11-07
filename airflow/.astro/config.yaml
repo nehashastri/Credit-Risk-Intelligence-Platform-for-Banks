@@ -8,9 +8,8 @@ project:
 
 deploy:
   include:
-    - "dags/**/*.py"            
-    - "dags/include/**"         
-    - "include/config/**"       
+    - "dags/**/*.py"
+    - "include/config/**"
     - "include/service_account.json"
 
 services:
