@@ -1,28 +1,39 @@
-# dags/news-landing-pipeline.py
-from datetime import datetime, timedelta
-from airflow import DAG
-from airflow.operators.python import PythonOperator
-from airflow.models import Variable
+from datetime import timedelta
+import pendulum
 import requests
 import os
 
-PROJECT_ID = "pipeline-882-team-project"
+from airflow import DAG
+from airflow.models import Variable
+from airflow.providers.standard.operators.python import PythonOperator
 
+ET = pendulum.timezone("America/New_York")
+PROJECT_ID = os.getenv("GCP_PROJECT_ID", "pipeline-882-team-project")
+
+# --------------------------------------------------
+# Cloud Run Invocation Task
+# --------------------------------------------------
 def invoke_landing_load_news():
     url = (Variable.get("LANDING_LOAD_NEWS_URL", default_var=None)
            or os.getenv("LANDING_LOAD_NEWS_URL")
-           or "https://landing-load-news-r25wwaz52q-uc.a.run.app")
-    payload = {}
-    resp = requests.post(url, json=payload, timeout=120)
+           or "https://landing-load-news-265141170939.us-central1.run.app")
+
+    print(f"[invoke_landing_load_news] Cloud Run URL: {url}")
+
+    resp = requests.post(url, json={}, timeout=180)
     if resp.status_code not in (200, 204):
         raise RuntimeError(f"[landing] CF call failed: {resp.status_code} {resp.text}")
 
+# --------------------------------------------------
+# DAG Definition
+# --------------------------------------------------
 with DAG(
     dag_id="news_landing_pipeline",
-    description="Load data from raw → landing for news and aggregate the last 7 days",
-    schedule="30 8 * * *",
-    start_date=datetime(2025, 1, 1),
+    description="Load news data from raw → landing and aggregate the last 7 days",
+    start_date=pendulum.datetime(2025, 1, 1, tz="UTC"),
+    schedule=None,  # No direct schedule, triggered by raw pipeline
     catchup=False,
+    is_paused_upon_creation=False,
     default_args={"retries": 1, "retry_delay": timedelta(minutes=5)},
     tags=["news", "landing", "bigquery"],
 ) as dag:
@@ -30,4 +41,5 @@ with DAG(
     trigger_landing_load = PythonOperator(
         task_id="invoke_landing_load_news",
         python_callable=invoke_landing_load_news,
+        execution_timeout=timedelta(minutes=4),
     )
