@@ -24,146 +24,111 @@ st.set_page_config(
 # Custom CSS for beautiful pastel design
 st.markdown("""
 <style>
-    /* Main background with pastel gradient */
-    .main .block-container {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        padding: 2rem 1rem;
-        border-radius: 15px;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-    }
-    
-    /* Sidebar styling */
-    .css-1d391kg {
-        background: linear-gradient(180deg, #ffecd2 0%, #fcb69f 100%);
-        border-radius: 15px;
-        margin: 1rem;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-    }
-    
-    /* Main header with pastel colors */
-    .main-header {
-        font-size: 2.8rem;
-        font-weight: bold;
-        background: linear-gradient(45deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-align: center;
-        margin-bottom: 2rem;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
-    }
-    
-    /* Metric cards with pastel backgrounds */
-    .metric-card {
-        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
-        padding: 1.5rem;
-        border-radius: 15px;
-        border: none;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-        margin: 0.5rem 0;
-        transition: transform 0.3s ease;
-    }
-    
-    .metric-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(0,0,0,0.15);
-    }
-    
-    /* Status indicators with pastel colors */
-    .status-indicator {
-        display: inline-block;
-        width: 14px;
-        height: 14px;
-        border-radius: 50%;
-        margin-right: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-    }
-    .status-green { 
-        background: linear-gradient(45deg, #a8e6cf, #88d8a3);
-        box-shadow: 0 0 10px rgba(168, 230, 207, 0.5);
-    }
-    .status-yellow { 
-        background: linear-gradient(45deg, #ffd3a5, #fd9853);
-        box-shadow: 0 0 10px rgba(255, 211, 165, 0.5);
-    }
-    .status-red { 
-        background: linear-gradient(45deg, #ffa8a8, #ff6b6b);
-        box-shadow: 0 0 10px rgba(255, 168, 168, 0.5);
-    }
-    
-    /* Button styling */
-    .stButton > button {
-        background: linear-gradient(45deg, #667eea, #764ba2);
-        color: white;
-        border: none;
-        border-radius: 25px;
-        padding: 0.5rem 2rem;
-        font-weight: 600;
-        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
-        transition: all 0.3s ease;
-    }
-    
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-    }
-    
-    /* Selectbox styling */
-    .stSelectbox > div > div {
-        background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
-        border-radius: 15px;
-        border: none;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    
-    /* Expander styling */
-    .streamlit-expanderHeader {
-        background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
-        border-radius: 10px;
-        border: none;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    
-    /* Success/Error messages */
-    .stSuccess {
-        background: linear-gradient(135deg, #a8e6cf 0%, #88d8a3 100%);
-        border-radius: 10px;
-        border: none;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    
-    .stError {
-        background: linear-gradient(135deg, #ffa8a8 0%, #ff6b6b 100%);
-        border-radius: 10px;
-        border: none;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    
-    .stWarning {
-        background: linear-gradient(135deg, #ffd3a5 0%, #fd9853 100%);
-        border-radius: 10px;
-        border: none;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    
-    /* Chart containers */
-    .js-plotly-plot {
-        border-radius: 15px;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-        background: white;
-    }
-    
-    /* Footer styling */
-    .footer {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 1rem;
-        border-radius: 15px;
-        text-align: center;
-        margin-top: 2rem;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.1);
-    }
+
+/* Light theme */
+[data-theme="light"] {
+    --bg-gradient: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%);
+    --sidebar-gradient: linear-gradient(180deg, #ffecd2 0%, #fcb69f 100%);
+    --card-bg: linear-gradient(135deg, #a1c4fd 0%, #c2e9fb 100%);
+    --header-gradient: linear-gradient(45deg, #6a11cb 0%, #2575fc 100%);
+    --footer-gradient: linear-gradient(135deg, #ff758c 0%, #ff7eb3 100%);
+    --text-color: #1a1a1a;
+    --plot-bg: #ffffff;
+}
+
+/* Dark theme */
+[data-theme="dark"] {
+    --bg-gradient: linear-gradient(135deg, #141e30 0%, #243b55 100%);
+    --sidebar-gradient: linear-gradient(180deg, #2c5364 0%, #203a43 50%, #0f2027 100%);
+    --card-bg: linear-gradient(135deg, #434343 0%, #000000 100%);
+    --header-gradient: linear-gradient(45deg, #4776E6 0%, #8E54E9 100%);
+    --footer-gradient: linear-gradient(135deg, #654ea3 0%, #eaafc8 100%);
+    --text-color: #f2f2f2;
+    --plot-bg: #1a1a2e;
+}
+
+/* General structure */
+.main .block-container {
+    background: var(--bg-gradient);
+    padding: 2rem 1rem;
+    border-radius: 15px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+    color: var(--text-color);
+}
+
+/* Sidebar */
+.css-1d391kg {
+    background: var(--sidebar-gradient);
+    border-radius: 15px;
+    margin: 1rem;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    color: var(--text-color);
+}
+
+/* Header */
+.main-header {
+    font-size: 2.8rem;
+    font-weight: bold;
+    background: var(--header-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    text-align: center;
+    margin-bottom: 2rem;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+}
+
+/* Metric cards */
+.metric-card {
+    background: var(--card-bg);
+    padding: 1.5rem;
+    border-radius: 15px;
+    border: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    margin: 0.5rem 0;
+    transition: transform 0.3s ease;
+    color: var(--text-color);
+}
+.metric-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+}
+
+/* Buttons */
+.stButton > button {
+    background: linear-gradient(45deg, #6a11cb, #2575fc);
+    color: white;
+    border: none;
+    border-radius: 25px;
+    padding: 0.5rem 2rem;
+    font-weight: 600;
+    box-shadow: 0 4px 15px rgba(38, 84, 209, 0.4);
+    transition: all 0.3s ease;
+}
+.stButton > button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(38, 84, 209, 0.6);
+}
+
+/* Plot */
+.js-plotly-plot {
+    border-radius: 15px;
+    background: var(--plot-bg);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+}
+
+/* Footer */
+.footer {
+    background: var(--footer-gradient);
+    color: white;
+    padding: 1rem;
+    border-radius: 15px;
+    text-align: center;
+    margin-top: 2rem;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+}
 </style>
 """, unsafe_allow_html=True)
+
 
 def main():
     # Header
