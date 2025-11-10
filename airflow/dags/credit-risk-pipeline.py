@@ -5,6 +5,9 @@ from airflow.operators.python import get_current_context
 from airflow.exceptions import AirflowSkipException
 from google.api_core.exceptions import TooManyRequests
 import requests, yaml, json, time
+from jinja2 import Template
+import uuid
+import utils 
 
 # --------------------------------------------------
 # Utility: Safe Cloud Function invoker
@@ -61,6 +64,7 @@ def credit_risk_pipeline():
     # --------------------------------------------------
     FRED_CONFIG = "/usr/local/airflow/include/config/fred_series.yaml"
     YFIN_CONFIG = "/usr/local/airflow/include/config/yfinance_tickers.yaml"
+    SQL_DIR = "/usr/local/airflow/include/sql" 
 
     with open(FRED_CONFIG, "r") as f:
         fred_series = yaml.safe_load(f)["series"]
@@ -177,6 +181,76 @@ def credit_risk_pipeline():
         print(f"✅ ML dataset creation response: {resp}")
         return resp
 
+    # -----------------------------------------------------------
+    # TASK 1: Register the model in mlops.model
+    # -----------------------------------------------------------
+    @task
+    def register_model():
+        """Register the credit delinquency model in mlops.model."""
+        model_vals = {
+            "model_id": "credit_delinquency_model",
+            "model_name": "Credit Delinquency Rate Predictor",
+        }
+
+        s = utils.read_sql(f"{SQL_DIR}/mlops-model-registry.sql")
+        template = Template(s)
+        sql = template.render(**model_vals)
+
+        print("🧾 Executing model registration SQL:")
+        print(sql)
+        utils.run_execute(sql)
+        print("✅ Model registered successfully.")
+
+    # -----------------------------------------------------------
+    # TASK 2: Register the dataset snapshot in mlops.dataset
+    # -----------------------------------------------------------
+    @task
+    def register_dataset():
+        """Register ML dataset metadata in BigQuery (mlops.dataset)."""
+
+        dataset_metadata = {
+            "dataset_id": f"ds_{datetime.now().strftime('%Y%m%d')}_{uuid.uuid4().hex[:6]}",
+            "data_version": datetime.now().strftime("%Y-%m-%d"),
+            "row_count": utils.run_fetchone("""
+                SELECT COUNT(*) 
+                FROM `pipeline-882-team-project.gold.fact_all_indicators_weekly`
+            """)[0],
+            "feature_count": utils.run_fetchone("""
+                SELECT COUNT(*) 
+                FROM UNNEST(REGEXP_EXTRACT_ALL(
+                    TO_JSON_STRING((SELECT AS STRUCT * 
+                                    FROM `pipeline-882-team-project.gold.fact_all_indicators_weekly` 
+                                    LIMIT 1)),
+                    r'"[^"]*":'
+                ))
+            """)[0],
+            "model_id": "credit_delinquency_model",
+        }
+
+        s = utils.read_sql(f"{SQL_DIR}/mlops-dataset-registry.sql")
+        template = Template(s)
+        sql = template.render(**dataset_metadata)
+
+        print("🧾 Executing dataset registration SQL:")
+        print(sql)
+        utils.run_execute(sql)
+        print("✅ Dataset registered successfully.")
+
+    # -----------------------------------------------------------
+    # TASK 3: Trigger ML Dataset creation Cloud Function
+    # -----------------------------------------------------------
+    @task(trigger_rule="all_done")
+    def create_ml_dataset():
+        """Trigger Cloud Function to build ML dataset."""
+        import requests
+        url = "https://us-central1-pipeline-882-team-project.cloudfunctions.net/create_ml_dataset"
+        print("🚀 Triggering ML dataset creation Cloud Function...")
+        response = requests.get(url)
+        print(f"✅ ML dataset creation response: {response.text}")
+        return response.text
+
+    
+
     # --------------------------------------------------
     # Task Dependencies
     # --------------------------------------------------
@@ -189,7 +263,13 @@ def credit_risk_pipeline():
     yf_landing = load_yfinance_landing(yf_loads)
 
     # Run ML dataset creation after both pipelines complete
-    create_ml_dataset().set_upstream([fred_landing, yf_landing])
+    create_ml_task = create_ml_dataset()
+    model_registration = register_model()
+    register_ml_task = register_dataset()
+
+    # Dependencies
+    create_ml_task.set_upstream([fred_landing, yf_landing])
+    register_ml_task.set_upstream([create_ml_task, model_registration])
 
 
 # Instantiate DAG
