@@ -39,10 +39,18 @@ yfinance_weekly AS (
   GROUP BY week, year
   ORDER BY year, week
 ),
+credit_delinq_quarterly AS (
+  SELECT EXTRACT(WEEK FROM date) AS week, EXTRACT(YEAR FROM date) AS year, 
+  AVG(delinq) AS delinq
+  FROM pipeline-882-team-project.landing.fact_credit_outcomes
+  GROUP BY week, year
+  ORDER BY year, week
+),
 combined AS (
   SELECT * FROM fred_weekly
   LEFT JOIN fred_monthly USING (week, year)
   LEFT JOIN yfinance_weekly USING (week, year)
+  LEFT JOIN credit_delinq_quarterly USING (week, year)
 ),
 with_boundaries AS (
   SELECT *,
@@ -55,9 +63,12 @@ with_boundaries AS (
     FIRST_VALUE(ownedconsumercredit IGNORE NULLS) OVER (ORDER BY year, week ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS ownedconsumercredit_next,
     LAST_VALUE(realgdp IGNORE NULLS) OVER (ORDER BY year, week ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS realgdp_prev,
     FIRST_VALUE(realgdp IGNORE NULLS) OVER (ORDER BY year, week ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS realgdp_next,
+    LAST_VALUE(delinq IGNORE NULLS) OVER (ORDER BY year, week ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS delinq_prev,
+    FIRST_VALUE(delinq IGNORE NULLS) OVER (ORDER BY year, week ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) AS delinq_next,
     SUM(CASE WHEN cpiurban IS NOT NULL THEN 1 ELSE 0 END) OVER (ORDER BY year, week ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cpiurban_grp,
     SUM(CASE WHEN ownedconsumercredit IS NOT NULL THEN 1 ELSE 0 END) OVER (ORDER BY year, week ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS ownedconsumercredit_grp,
-    SUM(CASE WHEN realgdp IS NOT NULL THEN 1 ELSE 0 END) OVER (ORDER BY year, week ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS realgdp_grp
+    SUM(CASE WHEN realgdp IS NOT NULL THEN 1 ELSE 0 END) OVER (ORDER BY year, week ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS realgdp_grp,
+    SUM(CASE WHEN delinq IS NOT NULL THEN 1 ELSE 0 END) OVER (ORDER BY year, week ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS delinq_grp
   FROM combined
 ),
 with_group_position AS (
@@ -67,12 +78,15 @@ with_group_position AS (
     ROW_NUMBER() OVER (PARTITION BY ownedconsumercredit_grp ORDER BY year, week) - 1 AS ownedconsumercredit_pos,
     COUNT(*) OVER (PARTITION BY ownedconsumercredit_grp) AS ownedconsumercredit_total,
     ROW_NUMBER() OVER (PARTITION BY realgdp_grp ORDER BY year, week) - 1 AS realgdp_pos,
-    COUNT(*) OVER (PARTITION BY realgdp_grp) AS realgdp_total
+    COUNT(*) OVER (PARTITION BY realgdp_grp) AS realgdp_total,
+    ROW_NUMBER() OVER (PARTITION BY delinq_grp ORDER BY year, week) - 1 AS delinq_pos,
+    COUNT(*) OVER (PARTITION BY delinq_grp) AS delinq_total
   FROM with_boundaries
 ), 
 final AS (
   SELECT 
   week, year,
+  COALESCE(delinq, delinq_prev + (delinq_next - delinq_prev) * delinq_pos / delinq_total) AS delinq,
   marketyield2yr, marketyield10yr, inflationrate, mortgagerate30yr,
   fedfundrate_filled AS fedfundrate,
   COALESCE(cpiurban, cpiurban_prev + (cpiurban_next - cpiurban_prev) * cpiurban_pos / cpiurban_total) AS cpiurban,
