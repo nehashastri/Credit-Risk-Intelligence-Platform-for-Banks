@@ -66,16 +66,29 @@ st.markdown("""
 }
 
 /* Header */
+/* Header styling with adaptive gradients */
 .main-header {
     font-size: 2.8rem;
     font-weight: bold;
-    background: var(--header-gradient);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
     text-align: center;
     margin-bottom: 2rem;
-    text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.25);
 }
+
+/* Light theme header gradient */
+[data-theme="light"] .main-header {
+    background: linear-gradient(45deg, #6a11cb, #2575fc);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Dark theme header gradient — brighter and higher contrast */
+[data-theme="dark"] .main-header {
+    background: linear-gradient(45deg, #9b8fff, #7ec8ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
 
 /* Metric cards */
 .metric-card {
