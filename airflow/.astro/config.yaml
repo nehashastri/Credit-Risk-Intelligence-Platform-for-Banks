@@ -1,5 +1,46 @@
+# airflow/.astro/config.yaml
 mounts:
-    - source: airflow/include/service_account.json
-      target: /usr/local/airflow/include/service_account.json
+  - source: airflow/include/service_account.json
+    target: /usr/local/airflow/include/service_account.json
+
 project:
-    name: airflow
+  name: airflow
+
+deploy:
+  include:
+    - "dags/**/*.py"
+    - "include/config/**"
+    - "include/service_account.json"
+
+services:
+  ui:
+    command: ui
+    ports:
+      - 8080:8080
+    environment:
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+      - AIRFLOW__WEBSERVER__BASE_URL=https://8080-cs-468297218788-default.cs-us-east1-dogs.cloudshell.dev
+      - AIRFLOW__WEBSERVER__ALLOWED_HOSTS=8080-cs-468297218788-default.cs-us-east1-dogs.cloudshell.dev,localhost,127.0.0.1
+      - AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
+      - AIRFLOW__WEBSERVER__COOKIE_SECURE=True
+      - AIRFLOW__WEBSERVER__COOKIE_SAMESITE=None
+  api:
+    command: api
+    ports:
+      - 8081:8080
+    environment:
+      - AIRFLOW__WEBSERVER__BASE_URL=https://8080-cs-468297218788-default.cs-us-east1-dogs.cloudshell.dev
+      - AIRFLOW__WEBSERVER__ALLOWED_HOSTS=8080-cs-468297218788-default.cs-us-east1-dogs.cloudshell.dev,localhost,127.0.0.1
+      - AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
+      - AIRFLOW__WEBSERVER__COOKIE_SECURE=True
+      - AIRFLOW__WEBSERVER__COOKIE_SAMESITE=None
+  scheduler:
+    command: scheduler
+  triggerer:
+    command: triggerer
+  dag-processor:
+    command: dag-processor
+  postgres:
+    image: postgres:12
+    ports:
+      - 5432:5432
