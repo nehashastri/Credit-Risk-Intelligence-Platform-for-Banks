@@ -8,58 +8,48 @@ client = bigquery.Client()
 fact_macro_indicators_monthly = """-- Merge 5 series, inner-join GDPC1, 1980+, then linearly interpolate gaps
 WITH
 fed AS (
-  SELECT DATE(date) AS date, MAX(value) AS fedfundrate
+  SELECT DISTINCT DATE(date) AS date, MAX(value) AS fedfundrate
   FROM `pipeline-882-team-project.raw.fedfunds`
   GROUP BY date
 ),
 cpi AS (
-  SELECT DATE(date) AS date, value AS cpiurban
+  SELECT DISTINCT DATE(date) AS date, value AS cpiurban
   FROM `pipeline-882-team-project.raw.cpiaucsl`
 ),
 un AS (
-  SELECT DATE(date) AS date, value AS unemployrate
+  SELECT DISTINCT DATE(date) AS date, value AS unemployrate
   FROM `pipeline-882-team-project.raw.unrate`
 ),
 tot AS (
-  SELECT DATE(date) AS date, value AS ownedconsumercredit
+  SELECT DISTINCT DATE(date) AS date, value AS ownedconsumercredit
   FROM `pipeline-882-team-project.raw.totalsl`
 ),
 rec AS (
-  SELECT DATE(date) AS date, value AS recessionindicator
+  SELECT DISTINCT DATE(date) AS date, value AS recessionindicator
   FROM `pipeline-882-team-project.raw.usrec`
 ),
 gdp AS (
-  SELECT DATE(date) AS date, value AS realgdp
+  SELECT DISTINCT DATE(date) AS date, value AS realgdp
   FROM `pipeline-882-team-project.raw.gdpc1`
 ),
 
-base AS (
+joined AS (
   SELECT
     date,
     fedfundrate,
     cpiurban,
     unemployrate,
     ownedconsumercredit,
-    recessionindicator
+    recessionindicator, 
+    realgdp
   FROM fed
   FULL OUTER JOIN cpi USING (date)
   FULL OUTER JOIN un  USING (date)
   FULL OUTER JOIN tot USING (date)
   FULL OUTER JOIN rec USING (date)
+  FULL OUTER JOIN gdp USING (date)
   WHERE date >= DATE '1980-01-01'
-),
-
-joined AS (
-  SELECT
-    b.date,
-    b.fedfundrate,
-    b.cpiurban,
-    b.unemployrate,
-    b.ownedconsumercredit,
-    b.recessionindicator,
-    g.realgdp
-  FROM base b
-  INNER JOIN gdp g USING (date)
+  ORDER BY date
 ),
 
 long AS (
@@ -75,13 +65,11 @@ long AS (
   ))
 ),
 
--- ✅ IGNORE NULLS goes inside FIRST_VALUE / LAST_VALUE
 neighbors AS (
   SELECT
     date,
     series,
     value AS original_value,
-
     LAST_VALUE(value IGNORE NULLS) OVER (
       PARTITION BY series ORDER BY date
       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
@@ -90,7 +78,6 @@ neighbors AS (
       PARTITION BY series ORDER BY date
       ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
     ) AS prev_date,
-
     FIRST_VALUE(value IGNORE NULLS) OVER (
       PARTITION BY series ORDER BY date
       ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
@@ -121,18 +108,52 @@ filled AS (
 wide AS (
   SELECT
     date,
-  ROUND(MAX(IF(series = 'fedfundrate',         value, NULL)), 2) AS fedfundrate,
-  ROUND(MAX(IF(series = 'cpiurban',            value, NULL)), 2) AS cpiurban,
-  ROUND(MAX(IF(series = 'unemployrate',        value, NULL)), 2) AS unemployrate,
-  ROUND(MAX(IF(series = 'ownedconsumercredit', value, NULL)), 2) AS ownedconsumercredit,
-  ROUND(MAX(IF(series = 'recessionindicator',  value, NULL)), 2) AS recessionindicator,
-  ROUND(MAX(IF(series = 'realgdp',             value, NULL)), 2) AS realgdp
+    ROUND(MAX(IF(series = 'fedfundrate',         value, NULL)), 2) AS fedfundrate,
+    ROUND(MAX(IF(series = 'cpiurban',            value, NULL)), 2) AS cpiurban,
+    ROUND(MAX(IF(series = 'unemployrate',        value, NULL)), 2) AS unemployrate,
+    ROUND(MAX(IF(series = 'ownedconsumercredit', value, NULL)), 2) AS ownedconsumercredit,
+    ROUND(MAX(IF(series = 'recessionindicator',  value, NULL)), 2) AS recessionindicator,
+    ROUND(MAX(IF(series = 'realgdp',             value, NULL)), 2) AS realgdp
   FROM filled
   GROUP BY date
+),
+
+-- gdp interpolation
+interpolated_gdp AS (
+  SELECT
+    date,
+    fedfundrate,
+    cpiurban,
+    unemployrate,
+    ownedconsumercredit,
+    recessionindicator,
+    CASE
+      WHEN realgdp IS NOT NULL THEN realgdp
+      ELSE ROUND(
+        LAST_VALUE(realgdp IGNORE NULLS) OVER (ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+        + (
+          FIRST_VALUE(realgdp IGNORE NULLS) OVER (ORDER BY date ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)
+          - LAST_VALUE(realgdp IGNORE NULLS) OVER (ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+        ) * SAFE_DIVIDE(
+          DATE_DIFF(date,
+            LAST_VALUE(IF(realgdp IS NOT NULL, date, NULL) IGNORE NULLS)
+              OVER (ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+            DAY
+          ),
+          DATE_DIFF(
+            FIRST_VALUE(IF(realgdp IS NOT NULL, date, NULL) IGNORE NULLS)
+              OVER (ORDER BY date ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING),
+            LAST_VALUE(IF(realgdp IS NOT NULL, date, NULL) IGNORE NULLS)
+              OVER (ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW),
+            DAY
+          )
+        ), 2)
+    END AS realgdp
+  FROM wide
 )
 
 SELECT *
-FROM wide
+FROM interpolated_gdp
 ORDER BY date;
 """
 

@@ -1,0 +1,7 @@
+# Cloud Function dependencies for raw_fetch_yfinance_append
+functions-framework==3.*
+google-cloud-storage==2.*
+pandas==2.*
+yfinance==0.2.*
+requests==2.*
+google-cloud-bigquery>=3.10.0

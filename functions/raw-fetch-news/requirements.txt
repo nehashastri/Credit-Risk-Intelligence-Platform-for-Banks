@@ -1,0 +1,10 @@
+functions-framework==3.4.0
+google-cloud-bigquery>=3.25.0
+google-cloud-core>=2.4.1
+requests>=2.32.3
+PyYAML>=6.0.1
+python-dotenv>=1.0.1
+# (YAML을 GCS에서 읽을 계획이면)
+google-cloud-storage>=2.18.2
+# (Secret Manager로 키 주입할 계획이면)
+google-cloud-secret-manager>=2.20.2
