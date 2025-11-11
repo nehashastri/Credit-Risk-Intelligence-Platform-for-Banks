@@ -152,9 +152,15 @@ def main():
     # Sidebar navigation
     st.sidebar.title("📋 Navigation")
     page = st.sidebar.selectbox(
-        "Select Page",
-        ["🏠 Home", "📊 Data Overview", "🔍 Exploratory Data Analysis"]
+    "Select Page",
+    [
+        "🏠 Home",
+        "📊 Data Overview",
+        "🔍 Exploratory Data Analysis",
+        "🤖 ML Lifecycle / Model Registry"
+    ]
     )
+
     
     # Initialize BigQuery connector
     try:
@@ -184,6 +190,13 @@ def main():
             show_exploratory_data_analysis()
         except Exception as e:
             st.error(f"Error loading Exploratory Data Analysis page: {str(e)}")
+    elif page == "🤖 ML Lifecycle / Model Registry":
+        try:
+            from pages.ml_lifecycle import show_ml_lifecycle
+            show_ml_lifecycle()
+        except Exception as e:
+            st.error(f"Error loading ML Lifecycle page: {str(e)}")
+
 
 def show_home_page(bq_connector, connection_status):
     """Display the home page with overview and data freshness"""
