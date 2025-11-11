@@ -36,7 +36,6 @@ METRIC_KEYS = ["sMAPE", "RMSE_recent6", "MAE", "Pearson_r", "R2", "MASE"]
 # ==================================
 def show_ml_lifecycle():
     st.title("🤖 ML Lifecycle & Model Registry")
-    st.caption("Fault-tolerant dashboard — gracefully handles missing data or tables.")
     st.info("🚧 Prototype view — metrics will populate once MLOps pipeline writes to warehouse.")
 
     # ==================================
@@ -62,7 +61,7 @@ def show_ml_lifecycle():
             return pd.DataFrame()
         return df.fillna("–")
     
-    @st.cache_data(ttl=300, show_spinner=False)
+    @st.cache_resource(show_spinner=False)
     def get_bq_client():
         try:
             return bigquery.Client(project=PROJECT_ID)
