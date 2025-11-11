@@ -1,12 +1,20 @@
 # dags/credit-risk-pipeline.py
-from airflow.decorators import dag, task
 from datetime import datetime, timedelta
-from airflow.operators.python import get_current_context
-from airflow.exceptions import AirflowSkipException
-from google.cloud import bigquery
-import requests, yaml, json, uuid
-from jinja2 import Template
 from pathlib import Path
+from typing import Optional
+
+# Airflow 2.10+ SDK (avoid deprecated warnings)
+from airflow.sdk import dag, task, get_current_context
+from airflow.exceptions import AirflowSkipException, AirflowFailException
+
+from google.cloud import bigquery
+from jinja2 import Template
+
+import requests
+import yaml
+import json
+import uuid
+import math
 
 # -----------------------------
 # Project constants
@@ -19,7 +27,7 @@ MLOPS_DATASET = "mlops"
 MODEL_ID   = "credit_delinquency_model"
 MODEL_NAME = "Credit Delinquency Rate Predictor"
 
-# Cloud Functions (ingest / transform / dataset / training)
+# Cloud Function endpoints
 CF_FETCH_FRED   = f"https://us-central1-{PROJECT}.cloudfunctions.net/raw-fetch-fred-append"
 CF_UPLOAD_FRED  = f"https://us-central1-{PROJECT}.cloudfunctions.net/raw_upload_fred_append"
 CF_LANDING_FRED = f"https://us-central1-{PROJECT}.cloudfunctions.net/landing-load-fred"
@@ -29,34 +37,35 @@ CF_UPLOAD_YF    = f"https://us-central1-{PROJECT}.cloudfunctions.net/raw_upload_
 CF_LANDING_YF   = f"https://us-central1-{PROJECT}.cloudfunctions.net/landing_load_yfinance_append"
 
 CF_CREATE_ML_DS = f"https://us-central1-{PROJECT}.cloudfunctions.net/create_ml_dataset"
-CF_TRAIN_MODEL  = f"https://us-central1-{PROJECT}.cloudfunctions.net/train-credit-model"  # expects querystring params
+CF_TRAIN_MODEL  = f"https://us-central1-{PROJECT}.cloudfunctions.net/train-credit-model"
 
-INFERENCE_ENDPOINT = f"https://us-central1-{PROJECT}.cloudfunctions.net/ml_predict_credit"  # placeholder
+INFERENCE_ENDPOINT = f"https://us-central1-{PROJECT}.cloudfunctions.net/ml_predict_credit"
 
 # -----------------------------
-# Local helpers (replace external utils)
+# Helper functions
 # -----------------------------
 def read_file(path_str: str) -> str:
-    """Read a local text file (e.g., SQL template)."""
+    """Read a text file (e.g., SQL template)."""
     p = Path(path_str)
     if not p.exists():
         raise FileNotFoundError(f"File not found: {path_str}")
     return p.read_text(encoding="utf-8")
 
 def bq_client() -> bigquery.Client:
+    """Create and return a BigQuery client."""
     return bigquery.Client(project=PROJECT)
 
 def run_execute(sql: str):
-    """Execute a BigQuery query and wait for completion."""
+    """Execute a SQL query and wait until it completes."""
     bq_client().query(sql).result()
 
 def run_fetchone(sql: str):
-    """Return first row of a BigQuery query (Row object or None)."""
+    """Fetch a single row from a BigQuery query result."""
     rows = list(bq_client().query(sql).result())
     return rows[0] if rows else None
 
 def invoke_function(url, params=None, method="GET", timeout=180):
-    """HTTP invoker with error handling and JSON fallback."""
+    """Invoke a Cloud Function endpoint with basic error handling and JSON fallback."""
     params = params or {}
     try:
         if method.upper() == "POST":
@@ -64,7 +73,7 @@ def invoke_function(url, params=None, method="GET", timeout=180):
         else:
             resp = requests.get(url, params=params, timeout=timeout)
 
-        # normalize skip conditions
+        # Normalize skip conditions when no new data is available
         if resp.status_code == 204 or "no new" in resp.text.lower():
             raise AirflowSkipException("No new data.")
         if resp.status_code >= 400:
@@ -81,8 +90,20 @@ def invoke_function(url, params=None, method="GET", timeout=180):
         print(f"❌ Unexpected error while calling {url}: {e}")
         raise
 
+def json_sanitize(obj):
+    """Recursively replace NaN/Inf with None for safe JSON serialization (XCom/BigQuery)."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: json_sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_sanitize(v) for v in obj]
+    return obj
+
 # -----------------------------
-# DAG
+# DAG definition
 # -----------------------------
 @dag(
     schedule="@daily",
@@ -94,23 +115,25 @@ def invoke_function(url, params=None, method="GET", timeout=180):
 )
 def credit_risk_pipeline():
     """
-    End-to-end credit risk pipeline with MLOps:
-      1) Incremental ingest (FRED, YFinance) → landing transforms
-      2) Build ML dataset (GOLD)
-      3) Register model and dataset snapshot
-      4) Train models via Cloud Function (baseline + ML)
-      5) Record training runs
-      6) Select best by sMAPE, register model version, deploy if approved
+    End-to-end MLOps pipeline for credit delinquency forecasting.
+
+    Steps:
+      1. Incremental ingestion (FRED + YFinance) and landing transformations
+      2. Build ML dataset (GOLD layer)
+      3. Register model and dataset metadata
+      4. Train multiple model variants via Cloud Functions
+      5. Record training runs in BigQuery
+      6. Select best-performing model by sMAPE, version, and deploy (policy-based)
     """
 
     # -----------------------------
-    # Config files
+    # Config paths
     # -----------------------------
     FRED_CONFIG = "/usr/local/airflow/include/config/fred_series.yaml"
     YFIN_CONFIG = "/usr/local/airflow/include/config/yfinance_tickers.yaml"
     SQL_DIR     = "/usr/local/airflow/include/sql"
 
-    # Model grid (baseline + 4 ML)
+    # Model configuration grid
     model_configs = [
         {"algorithm": "base",           "hyperparameters": {"type": "rolling_mean", "window": 6}},
         {"algorithm": "random_forest",  "hyperparameters": {"n_estimators": 200, "max_depth": 10, "min_samples_split": 5}},
@@ -128,10 +151,11 @@ def credit_risk_pipeline():
         yfinance_tickers = yaml.safe_load(f)["tickers"]
 
     # -----------------------------
-    # FRED: Extract → Upload → Landing
+    # FRED ingestion and landing
     # -----------------------------
     @task
     def extract_fred(series_id: str) -> dict:
+        """Fetch incremental FRED series data via Cloud Function."""
         ctx = get_current_context()
         payload = {"series_id": series_id, "run_id": ctx["dag_run"].run_id}
         resp = invoke_function(CF_FETCH_FRED, params=payload)
@@ -139,6 +163,7 @@ def credit_risk_pipeline():
 
     @task
     def load_fred_to_bq(payload: dict):
+        """Load fetched FRED data into BigQuery raw dataset."""
         sid = payload.get("series_id")
         if not payload.get("new_data"):
             raise AirflowSkipException(f"No new FRED data for {sid}")
@@ -147,25 +172,30 @@ def credit_risk_pipeline():
 
     @task(trigger_rule="all_done")
     def load_fred_landing(results: list):
+        """Trigger FRED landing transformation after all loads complete."""
         if not any(r.get("loaded") for r in results if isinstance(r, dict)):
             raise AirflowSkipException("No FRED updates → skip landing.")
         return invoke_function(CF_LANDING_FRED)
 
     # -----------------------------
-    # YFinance: Extract → Upload → Landing
+    # YFinance ingestion and landing
     # -----------------------------
     @task
     def extract_yfinance(ticker: str) -> dict:
+        """Fetch incremental stock data from YFinance via Cloud Function."""
         ctx = get_current_context()
         payload = {"ticker": ticker, "run_id": ctx["dag_run"].run_id}
         resp = invoke_function(CF_FETCH_YF, params=payload)
         status = str(resp.get("status", "")).lower()
         if status in ["no_data", "skipped", "up_to_date"] or "no new" in str(resp).lower():
             raise AirflowSkipException(f"⏩ No new data for {ticker}")
-        return resp  # should include {"ticker": ...}
+        if "ticker" not in resp:
+            resp["ticker"] = ticker
+        return resp
 
     @task(retries=2, retry_delay=timedelta(seconds=20))
     def load_yfinance_to_bq(payload: dict) -> dict:
+        """Upload YFinance data into BigQuery raw dataset."""
         ticker = payload.get("ticker")
         if not ticker:
             raise AirflowSkipException(f"No ticker in payload: {payload}")
@@ -174,38 +204,40 @@ def credit_risk_pipeline():
 
     @task(trigger_rule="all_done")
     def load_yfinance_landing(results: list):
+        """Run YFinance landing transformation after all loads."""
         if not any(r.get("status") == "success" for r in results if isinstance(r, dict)):
             raise AirflowSkipException("No YFinance updates → skip landing.")
         return invoke_function(CF_LANDING_YF)
 
     # -----------------------------
-    # Build ML dataset (GOLD)
+    # Build ML dataset (GOLD layer)
     # -----------------------------
     @task(trigger_rule="all_done")
     def create_ml_dataset():
+        """Trigger the ML dataset creation Cloud Function."""
         resp = invoke_function(CF_CREATE_ML_DS)
         print(f"✅ ML dataset creation response: {resp}")
         return resp
 
     # -----------------------------
-    # MLOps: register model & dataset
+    # Register model and dataset
     # -----------------------------
     @task
     def register_model():
+        """Insert or update model metadata in the MLOps registry."""
         vals = {
             "model_id": MODEL_ID,
             "model_name": MODEL_NAME,
             "owner": "analytics_team",
             "business_problem": "Forecast weekly credit delinquency rates using macro & financial indicators",
             "ticket_number": "CR-001",
-            "tags_json": json.dumps({"target": "delinquency_rate", "frequency": "weekly"}),
+            "tags_json": json.dumps({"target": "delinquency_rate", "frequency": "weekly"}, ensure_ascii=False, allow_nan=False),
         }
 
         tpl_path = f"{SQL_DIR}/mlops-model-registry.sql"
         if Path(tpl_path).exists():
             sql = Template(read_file(tpl_path)).render(**vals)
         else:
-            # BigQuery MERGE (upsert)
             sql = f"""
             MERGE `{PROJECT}.{MLOPS_DATASET}.model` T
             USING (SELECT '{vals["model_id"]}' AS model_id) S
@@ -227,14 +259,15 @@ def credit_risk_pipeline():
 
     @task
     def register_dataset():
-        # row_count
+        """Register dataset snapshot (row & feature counts)."""
+        # Count rows
         r = run_fetchone(f"""
             SELECT COUNT(*) AS c
             FROM `{PROJECT}.{GOLD_DATASET}.fact_all_indicators_weekly`
         """)
         row_count = int(r["c"]) if r and "c" in r.keys() else (int(r[0]) if r else 0)
 
-        # feature_count (count json keys of one row)
+        # Count features from a single sample row (by counting JSON keys)
         f = run_fetchone(f"""
             SELECT COUNT(*) AS f
             FROM UNNEST(REGEXP_EXTRACT_ALL(
@@ -271,63 +304,109 @@ def credit_risk_pipeline():
     # -----------------------------
     # Train and persist runs
     # -----------------------------
-    @task(retries=0)
+    @task(
+        retries=0,
+        max_active_tis_per_dag=2,  # Limit concurrency for stability
+    )
     def train_model(cfg: dict, ds_meta: dict):
-        """POST to training CF with both querystring and JSON body."""
+        """POST to training CF with both querystring and JSON body. Return XCom-safe payload."""
         run_id = f"run_{MODEL_ID}_{cfg['algorithm']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-        hyperparams_str = json.dumps(cfg["hyperparameters"])
-        metric_keys = ["smape", "rmse_recent6", "mae", "pearson_r", "r2", "mase"]
-        metric_keys_str = json.dumps(metric_keys)
+        metric_keys = ["smape", "rmse_recent6", "mae", "pearson_r", "r2", "mase", "test_count"]
 
         params_qs = {
             "run_id": run_id,
             "model_id": MODEL_ID,
             "algorithm": cfg["algorithm"],
-            "hyperparameters": hyperparams_str,   # JSON string
+            "hyperparameters": json.dumps(cfg["hyperparameters"], ensure_ascii=False, allow_nan=False),
             "dataset_id": ds_meta["dataset_id"],
-            "metric_keys": metric_keys_str,       # JSON string
+            "metric_keys": json.dumps(metric_keys, ensure_ascii=False, allow_nan=False),
         }
         payload_body = {
             "run_id": run_id,
             "model_id": MODEL_ID,
             "algorithm": cfg["algorithm"],
-            "hyperparameters": cfg["hyperparameters"],  # dict
+            "hyperparameters": cfg["hyperparameters"],
             "dataset_id": ds_meta["dataset_id"],
             "metric_keys": metric_keys,
         }
 
         print(f"🚀 Training {cfg['algorithm']} ...")
-        resp = requests.post(
-            CF_TRAIN_MODEL,
-            params=params_qs,
-            json=payload_body,
-            headers={"Content-Type": "application/json"},
-            timeout=300,
-        )
-        if resp.status_code >= 400:
-            print(f"❌ Request failed ({resp.status_code}): {resp.text}")
+        try:
+            resp = requests.post(
+                CF_TRAIN_MODEL,
+                params=params_qs,
+                json=payload_body,
+                headers={"Content-Type": "application/json"},
+                timeout=180,
+            )
             resp.raise_for_status()
+        except requests.exceptions.Timeout as e:
+            raise AirflowFailException(f"Training timeout for {cfg['algorithm']}: {e}")
+        except requests.exceptions.RequestException as e:
+            raise AirflowFailException(f"Training request failed for {cfg['algorithm']}: {e}")
 
         try:
-            out = resp.json()
+            raw = resp.json()
         except json.JSONDecodeError:
-            out = {"text": resp.text}
+            raw = {"text": resp.text}
 
-        # normalize fields for downstream steps
-        out.setdefault("run_id", run_id)
-        out.setdefault("dataset_id", ds_meta["dataset_id"])
-        out.setdefault("params", {
+        # Keep only allowed keys for XCom and sanitize metrics
+        allow = {"metrics", "gcs_path", "artifact", "status"}
+        slim = {k: raw[k] for k in allow if k in raw}
+
+        if "metrics" in slim:
+            slim["metrics"] = json_sanitize(slim["metrics"])
+
+        # Fill required metadata
+        slim.setdefault("status", "completed")
+        slim.setdefault("artifact", slim.get("gcs_path", ""))
+        slim["run_id"] = run_id
+        slim["dataset_id"] = ds_meta["dataset_id"]
+        slim["params"] = {
             "algorithm": cfg["algorithm"],
             "hyperparameters": cfg["hyperparameters"],
-        })
-        if "artifact" not in out and "gcs_path" in out:
-            out["artifact"] = out["gcs_path"]
+        }
 
-        return out
+        # Validate JSON and enforce ~40KB size guard for XCom
+        try:
+            blob = json.dumps(slim, ensure_ascii=False, allow_nan=False)
+        except ValueError:
+            # If serialization fails (e.g., NaN), shrink metrics to a summary
+            m = json_sanitize(slim.get("metrics", {}))
+            summary = {k: m.get(k) for k in ["smape","mae","r2","mase","pearson_r","rmse_recent6","test_count"] if k in m}
+            slim = {
+                "run_id": run_id,
+                "dataset_id": ds_meta["dataset_id"],
+                "params": slim["params"],
+                "metrics": summary,
+                "artifact": slim.get("artifact",""),
+                "status": slim.get("status","completed"),
+            }
+            blob = json.dumps(slim, ensure_ascii=False, allow_nan=False)
 
-    @task(retries=0)
+        if len(blob.encode("utf-8")) > 40_000:
+            m = slim.get("metrics", {})
+            summary = {k: m.get(k) for k in ["smape","mae","r2","mase","pearson_r","rmse_recent6","test_count"] if k in m}
+            slim["metrics"] = summary
+            json.dumps(slim, ensure_ascii=False, allow_nan=False)  # final check
+
+        return slim
+
+    @task(
+        retries=0,
+        max_active_tis_per_dag=2,  # Limit concurrency for stability
+    )
     def register_training_run(model_result: dict):
+        """Persist a single training run (params/metrics/artifact) into MLOps tables."""
+        params_safe  = json_sanitize(model_result.get("params", {}))
+        metrics_safe = json_sanitize(model_result.get("metrics", {}))
+
+        params_json  = json.dumps(params_safe,  ensure_ascii=False, allow_nan=False).replace("'", "''")
+        metrics_json = json.dumps(metrics_safe, ensure_ascii=False, allow_nan=False).replace("'", "''")
+
+        artifact_path = (model_result.get("artifact", model_result.get("gcs_path","")) or "").replace("'", "''")
+        status_val    = model_result.get("status", "completed")
+
         sql = f"""
         INSERT INTO `{PROJECT}.{MLOPS_DATASET}.training_run`
         (run_id, model_id, dataset_id, params, metrics, artifact, status, created_at)
@@ -335,10 +414,10 @@ def credit_risk_pipeline():
             '{model_result["run_id"]}',
             '{MODEL_ID}',
             '{model_result.get("dataset_id","")}',
-            '{json.dumps(model_result.get("params", {})).replace("'", "''")}',
-            '{json.dumps(model_result.get("metrics", {})).replace("'", "''")}',
-            '{model_result.get("artifact", model_result.get("gcs_path","")).replace("'", "''")}',
-            '{model_result.get("status", "completed")}',
+            '{params_json}',
+            '{metrics_json}',
+            '{artifact_path}',
+            '{status_val}',
             CURRENT_TIMESTAMP()
         )
         """
@@ -349,10 +428,12 @@ def credit_risk_pipeline():
     # -----------------------------
     # Select best, version, deploy
     # -----------------------------
-    @task
+    @task(trigger_rule="all_done")
     def find_best_model(ds_meta: dict):
+        """Find the best completed run by lowest sMAPE and fetch optional artifact path."""
+        # Select best run by sMAPE
         best_sql = f"""
-        SELECT run_id, params, metrics, artifact
+        SELECT run_id, params, metrics
         FROM `{PROJECT}.{MLOPS_DATASET}.training_run`
         WHERE model_id = '{MODEL_ID}'
           AND dataset_id = '{ds_meta["dataset_id"]}'
@@ -364,6 +445,7 @@ def credit_risk_pipeline():
         if not best:
             raise AirflowSkipException("No completed training runs found.")
 
+        # Locate baseline sMAPE for comparison
         base_sql = f"""
         SELECT JSON_VALUE(metrics, '$.smape') AS base_smape
         FROM `{PROJECT}.{MLOPS_DATASET}.training_run`
@@ -388,27 +470,74 @@ def credit_risk_pipeline():
             except Exception:
                 return row[idx]
 
+        run_id   = _get(best, "run_id", 0)
+        params   = json.loads(_get(best, "params", 1))
+        metrics  = json.loads(_get(best, "metrics", 2))
+
+        # Check if 'artifact' column exists (some environments may omit it)
+        chk = run_fetchone(f"""
+          SELECT COUNT(*) AS c
+          FROM `{PROJECT}.{MLOPS_DATASET}`.INFORMATION_SCHEMA.COLUMNS
+          WHERE table_name = 'training_run' AND column_name = 'artifact'
+        """)
+        has_artifact_col = False
+        try:
+            has_artifact_col = (int(chk["c"]) if chk and "c" in chk.keys() else int(chk[0])) > 0
+        except Exception:
+            has_artifact_col = False
+
+        artifact: Optional[str] = ""
+        if has_artifact_col:
+            art_row = run_fetchone(f"""
+              SELECT artifact
+              FROM `{PROJECT}.{MLOPS_DATASET}.training_run`
+              WHERE run_id = '{run_id}'
+              LIMIT 1
+            """)
+            if art_row:
+                try:
+                    artifact = art_row["artifact"]
+                except Exception:
+                    artifact = art_row[0]
+            artifact = artifact or ""
+
         return {
-            "run_id": _get(best, "run_id", 0),
-            "params": json.loads(_get(best, "params", 1)),
-            "metrics": json.loads(_get(best, "metrics", 2)),
-            "artifact": _get(best, "artifact", 3),
+            "run_id": run_id,
+            "params": params,
+            "metrics": metrics,
+            "artifact": artifact,              # empty string if unavailable
             "baseline_smape": base_smape,
             "dataset_id": ds_meta["dataset_id"],
         }
 
     @task
     def register_model_version(best: dict):
-        status = "approved"
-        if best.get("baseline_smape") is not None:
-            new_smape = float(best["metrics"]["smape"])
-            improvement = (best["baseline_smape"] - new_smape) / best["baseline_smape"]
+        """Create a new model version with status based on improvement over baseline."""
+        def to_float_safe(x):
+            try:
+                v = float(x)
+                if math.isnan(v) or math.isinf(v):
+                    return None
+                return v
+            except Exception:
+                return None
+
+        base = to_float_safe(best.get("baseline_smape"))
+        new  = to_float_safe(best.get("metrics", {}).get("smape"))
+
+        # Conservative policy: mark as candidate unless >=10% improvement over a valid baseline
+        status = "candidate"
+        if base is not None and base > 0 and new is not None:
+            improvement = (base - new) / base
             status = "approved" if improvement >= 0.10 else "candidate"
-            print(f"Baseline sMAPE={best['baseline_smape']:.4f}, new sMAPE={new_smape:.4f}, improvement={improvement:.2%}")
+            print(f"Baseline sMAPE={base:.6f}, new sMAPE={new:.6f}, improvement={improvement:.2%}")
         else:
-            print("No baseline found; approving first model version by default.")
+            print(f"⚠️ Baseline or new sMAPE invalid (baseline={base}, new={new}); marking as candidate.")
 
         model_version_id = f"{MODEL_ID}_v{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        artifact_path = (best.get("artifact") or "").replace("'", "''")
+        metrics_json = json.dumps(json_sanitize(best.get("metrics", {})), ensure_ascii=False, allow_nan=False).replace("'", "''")
+
         insert_sql = f"""
         INSERT INTO `{PROJECT}.{MLOPS_DATASET}.model_version`
         (model_version_id, model_id, training_run_id, artifact_path, metrics_json, status, created_at)
@@ -416,8 +545,8 @@ def credit_risk_pipeline():
             '{model_version_id}',
             '{MODEL_ID}',
             '{best["run_id"]}',
-            '{best["artifact"].replace("'", "''")}',
-            '{json.dumps(best["metrics"]).replace("'", "''")}',
+            '{artifact_path}',
+            '{metrics_json}',
             '{status}',
             CURRENT_TIMESTAMP()
         )
@@ -428,26 +557,32 @@ def credit_risk_pipeline():
 
     @task
     def register_deployment(mv: dict):
-        if mv["status"] != "approved":
-            print("Deployment skipped (status != approved).")
-            return {"deployed": False, "model_version_id": mv["model_version_id"]}
-
-        # archive previous active deployments
-        archive_sql = f"""
-        UPDATE `{PROJECT}.{MLOPS_DATASET}.deployment`
-           SET traffic_split = 0.0
-         WHERE deployment_id IN (
-           SELECT d.deployment_id
-             FROM `{PROJECT}.{MLOPS_DATASET}.deployment` d
-             JOIN `{PROJECT}.{MLOPS_DATASET}.model_version` mv
-               ON d.model_version_id = mv.model_version_id
-            WHERE mv.model_id = '{MODEL_ID}'
-              AND d.traffic_split > 0
-         )
         """
-        run_execute(archive_sql)
+        Record a deployment row. If status is 'approved', route full traffic (1.0).
+        Otherwise, stage the version with traffic=0.0 for auditing and later promotion.
+        """
+        is_approved = (mv.get("status") == "approved")
 
+        if is_approved:
+            # Archive existing active deployments for this model (set traffic to 0.0)
+            archive_sql = f"""
+            UPDATE `{PROJECT}.{MLOPS_DATASET}.deployment`
+               SET traffic_split = 0.0
+             WHERE deployment_id IN (
+               SELECT d.deployment_id
+                 FROM `{PROJECT}.{MLOPS_DATASET}.deployment` d
+                 JOIN `{PROJECT}.{MLOPS_DATASET}.model_version` mv
+                   ON d.model_version_id = mv.model_version_id
+                WHERE mv.model_id = '{MODEL_ID}'
+                  AND d.traffic_split > 0
+             )
+            """
+            run_execute(archive_sql)
+
+        # Always insert a row (approved -> 1.0 traffic, candidate -> 0.0 traffic)
         deployment_id = f"deploy_{mv['model_version_id']}"
+        traffic = 1.0 if is_approved else 0.0
+
         insert_sql = f"""
         INSERT INTO `{PROJECT}.{MLOPS_DATASET}.deployment`
         (deployment_id, model_version_id, endpoint_url, traffic_split, deployed_at)
@@ -455,18 +590,28 @@ def credit_risk_pipeline():
             '{deployment_id}',
             '{mv["model_version_id"]}',
             '{INFERENCE_ENDPOINT}',
-            1.0,
+            {traffic},
             CURRENT_TIMESTAMP()
         )
         """
         run_execute(insert_sql)
-        print(f"🚀 Deployed: {deployment_id} → {INFERENCE_ENDPOINT}")
-        return {"deployed": True, "deployment_id": deployment_id, "endpoint_url": INFERENCE_ENDPOINT}
+
+        if is_approved:
+            print(f"🚀 Deployed: {deployment_id} → {INFERENCE_ENDPOINT} (traffic=1.0)")
+        else:
+            print(f"📝 Staged (not approved): {deployment_id} recorded with traffic=0.0")
+
+        return {
+            "deployed": is_approved,
+            "deployment_id": deployment_id,
+            "endpoint_url": INFERENCE_ENDPOINT,
+            "traffic_split": traffic
+        }
 
     # -----------------------------
     # Orchestration
     # -----------------------------
-    # Ingest flows
+    # Ingestion flows
     fred_extracts = extract_fred.expand(series_id=fred_series)
     fred_loads    = load_fred_to_bq.expand(payload=fred_extracts)
     fred_land     = load_fred_landing(fred_loads)
@@ -475,7 +620,7 @@ def credit_risk_pipeline():
     yf_loads      = load_yfinance_to_bq.expand(payload=yf_extracts)
     yf_land       = load_yfinance_landing(yf_loads)
 
-    # Build GOLD after both landings
+    # Build GOLD dataset after both landings complete
     ml_ds = create_ml_dataset()
     ml_ds.set_upstream([fred_land, yf_land])
 
@@ -484,16 +629,17 @@ def credit_risk_pipeline():
     dataset_reg = register_dataset()
     dataset_reg.set_upstream([ml_ds, model_reg])
 
-    # Train models in parallel (fix: only train_model uses partial(ds_meta=...))
+    # Train models in parallel (with concurrency limits)
     train_results = train_model.partial(ds_meta=dataset_reg).expand(cfg=model_configs)
 
-    # Persist runs (fix: NO partial here because function doesn't accept ds_meta/cfg)
+    # Persist training runs (with concurrency limits)
     recorded_runs = register_training_run.expand(model_result=train_results)
 
-    # Ensure best-model selection runs after all runs are recorded
+    # Select best model after all runs are recorded
     best = find_best_model(dataset_reg)
     best.set_upstream(recorded_runs)
 
+    # Version the best model, then register a deployment row (approved → traffic=1.0, else 0.0)
     mv = register_model_version(best)
     register_deployment(mv)
 
