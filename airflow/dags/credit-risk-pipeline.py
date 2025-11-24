@@ -100,13 +100,17 @@ def credit_risk_pipeline():
     #   NOTE: The CF expects "base" as the baseline algorithm name.
     # --------------------------------------------------
     model_configs = [
-        # Baseline: rolling mean (e.g., 6-week window). CF will calculate EMA/rolling internally if supported.
-        {"algorithm": "base",            "hyperparameters": {"type": "rolling_mean", "window": 6}},
-        {"algorithm": "random_forest",   "hyperparameters": {"n_estimators": 200, "max_depth": 10, "min_samples_split": 5}},
-        {"algorithm": "xgboost",         "hyperparameters": {"max_depth": 4, "eta": 0.1, "subsample": 0.8, "colsample_bytree": 0.8}},
-        {"algorithm": "lightgbm",        "hyperparameters": {"num_leaves": 31, "learning_rate": 0.05, "feature_fraction": 0.9}},
-        {"algorithm": "elastic_net",     "hyperparameters": {"alpha": 0.5, "l1_ratio": 0.2}},
-    ]
+    {"algorithm": "base"},
+    {"algorithm": "random_forest"},
+    {"algorithm": "xgboost"},
+    {"algorithm": "lightgbm"},
+    {"algorithm": "elastic_net"},
+    {"algorithm": "gradient_boosting"},
+    {"algorithm": "arima"},
+    {"algorithm": "sarimax"},
+    {"algorithm": "varmax"},
+]
+
 
     # --------------------------------------------------
     # Load YAML configs
@@ -242,27 +246,30 @@ def credit_risk_pipeline():
     @task
     def train_model(cfg: dict, ds_meta: dict):
         """Call CF to train one model; return full training result payload."""
+        
         run_id = f"run_{MODEL_ID}_{cfg['algorithm']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        payload = {
+
+        # Build query params EXPECTED by Cloud Function
+        params = {
             "run_id": run_id,
             "model_id": MODEL_ID,
             "algorithm": cfg["algorithm"],
-            "hyperparameters": cfg["hyperparameters"],
             "dataset_id": ds_meta["dataset_id"],
-            # Request a consistent metric set from CF for ranking & dashboards
-            "metric_keys": [
-                "portfolio.smape",
-                "portfolio.rmse_recent6",
-                "portfolio.mae",
-                "portfolio.pearson_r",
-                "portfolio.r2",
-                "portfolio.mase"
-            ]
         }
+
         print(f"🚀 Training {cfg['algorithm']} ...")
-        result = invoke_function(CF_TRAIN_MODEL, params=payload, method="POST")
-        # Expected shape: {run_id, dataset_id, params, metrics, artifact, status}
+
+        # Cloud Function ONLY accepts GET style query-string params
+        result = invoke_function(
+            CF_TRAIN_MODEL,
+            params=params,
+            method="GET"    # IMPORTANT: CF reads request.args, not JSON body
+        )
+
+        # Expected shape returned by CF: 
+        # { run_id, algorithm, best_hyperparameters, gcs_path, metrics, feature_count }
         return result
+
 
     @task
     def register_training_run(model_result: dict):
