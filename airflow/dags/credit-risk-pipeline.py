@@ -135,12 +135,17 @@ def credit_risk_pipeline():
 
     # Model configuration grid
     model_configs = [
-        {"algorithm": "base",           "hyperparameters": {"type": "rolling_mean", "window": 6}},
-        {"algorithm": "random_forest",  "hyperparameters": {"n_estimators": 200, "max_depth": 10, "min_samples_split": 5}},
-        {"algorithm": "xgboost",        "hyperparameters": {"max_depth": 4, "eta": 0.1, "subsample": 0.8, "colsample_bytree": 0.8}},
-        {"algorithm": "lightgbm",       "hyperparameters": {"num_leaves": 31, "learning_rate": 0.05, "feature_fraction": 0.9}},
-        {"algorithm": "elastic_net",    "hyperparameters": {"alpha": 0.5, "l1_ratio": 0.2}},
-    ]
+    {"algorithm": "base"},
+    {"algorithm": "random_forest"},
+    {"algorithm": "xgboost"},
+    {"algorithm": "lightgbm"},
+    {"algorithm": "elastic_net"},
+    {"algorithm": "gradient_boosting"},
+    {"algorithm": "arima"},
+    {"algorithm": "sarimax"},
+    {"algorithm": "varmax"},
+]
+
 
     # -----------------------------
     # Load YAML configs
@@ -309,93 +314,33 @@ def credit_risk_pipeline():
         max_active_tis_per_dag=2,  # Limit concurrency for stability
     )
     def train_model(cfg: dict, ds_meta: dict):
-        """POST to training CF with both querystring and JSON body. Return XCom-safe payload."""
+        """Call CF to train one model; return full training result payload."""
+        
         run_id = f"run_{MODEL_ID}_{cfg['algorithm']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        metric_keys = ["smape", "rmse_recent6", "mae", "pearson_r", "r2", "mase", "test_count"]
 
-        params_qs = {
+        # Build query params EXPECTED by Cloud Function
+        params = {
             "run_id": run_id,
             "model_id": MODEL_ID,
             "algorithm": cfg["algorithm"],
-            "hyperparameters": json.dumps(cfg["hyperparameters"], ensure_ascii=False, allow_nan=False),
             "dataset_id": ds_meta["dataset_id"],
-            "metric_keys": json.dumps(metric_keys, ensure_ascii=False, allow_nan=False),
-        }
-        payload_body = {
-            "run_id": run_id,
-            "model_id": MODEL_ID,
-            "algorithm": cfg["algorithm"],
-            "hyperparameters": cfg["hyperparameters"],
-            "dataset_id": ds_meta["dataset_id"],
-            "metric_keys": metric_keys,
         }
 
         print(f"🚀 Training {cfg['algorithm']} ...")
-        try:
-            resp = requests.post(
-                CF_TRAIN_MODEL,
-                params=params_qs,
-                json=payload_body,
-                headers={"Content-Type": "application/json"},
-                timeout=180,
-            )
-            resp.raise_for_status()
-        except requests.exceptions.Timeout as e:
-            raise AirflowFailException(f"Training timeout for {cfg['algorithm']}: {e}")
-        except requests.exceptions.RequestException as e:
-            raise AirflowFailException(f"Training request failed for {cfg['algorithm']}: {e}")
 
-        try:
-            raw = resp.json()
-        except json.JSONDecodeError:
-            raw = {"text": resp.text}
+        # Cloud Function ONLY accepts GET style query-string params
+        result = invoke_function(
+            CF_TRAIN_MODEL,
+            params=params,
+            method="GET"    # IMPORTANT: CF reads request.args, not JSON body
+        )
 
-        # Keep only allowed keys for XCom and sanitize metrics
-        allow = {"metrics", "gcs_path", "artifact", "status"}
-        slim = {k: raw[k] for k in allow if k in raw}
+        # Expected shape returned by CF: 
+        # { run_id, algorithm, best_hyperparameters, gcs_path, metrics, feature_count }
+        return result
 
-        if "metrics" in slim:
-            slim["metrics"] = json_sanitize(slim["metrics"])
 
-        # Fill required metadata
-        slim.setdefault("status", "completed")
-        slim.setdefault("artifact", slim.get("gcs_path", ""))
-        slim["run_id"] = run_id
-        slim["dataset_id"] = ds_meta["dataset_id"]
-        slim["params"] = {
-            "algorithm": cfg["algorithm"],
-            "hyperparameters": cfg["hyperparameters"],
-        }
-
-        # Validate JSON and enforce ~40KB size guard for XCom
-        try:
-            blob = json.dumps(slim, ensure_ascii=False, allow_nan=False)
-        except ValueError:
-            # If serialization fails (e.g., NaN), shrink metrics to a summary
-            m = json_sanitize(slim.get("metrics", {}))
-            summary = {k: m.get(k) for k in ["smape","mae","r2","mase","pearson_r","rmse_recent6","test_count"] if k in m}
-            slim = {
-                "run_id": run_id,
-                "dataset_id": ds_meta["dataset_id"],
-                "params": slim["params"],
-                "metrics": summary,
-                "artifact": slim.get("artifact",""),
-                "status": slim.get("status","completed"),
-            }
-            blob = json.dumps(slim, ensure_ascii=False, allow_nan=False)
-
-        if len(blob.encode("utf-8")) > 40_000:
-            m = slim.get("metrics", {})
-            summary = {k: m.get(k) for k in ["smape","mae","r2","mase","pearson_r","rmse_recent6","test_count"] if k in m}
-            slim["metrics"] = summary
-            json.dumps(slim, ensure_ascii=False, allow_nan=False)  # final check
-
-        return slim
-
-    @task(
-        retries=0,
-        max_active_tis_per_dag=2,  # Limit concurrency for stability
-    )
+    @task
     def register_training_run(model_result: dict):
         """Persist a single training run (params/metrics/artifact) into MLOps tables."""
         params_safe  = json_sanitize(model_result.get("params", {}))
