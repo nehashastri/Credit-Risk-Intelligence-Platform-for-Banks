@@ -5,7 +5,7 @@ from airflow.operators.python import get_current_context
 from airflow.exceptions import AirflowSkipException
 import requests, yaml, json, time, uuid
 from jinja2 import Template
-import utils
+from utils import read_sql
 
 # --------------------------------------------------
 # Utility: Safe Cloud Function invoker
