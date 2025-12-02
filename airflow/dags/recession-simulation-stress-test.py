@@ -1,7 +1,7 @@
 from datetime import datetime
 from airflow.sdk import dag, task
 from pathlib import Path
-from ba882 import utils
+import utils
 from jinja2 import Template
 import pandas as pd
 import numpy as np

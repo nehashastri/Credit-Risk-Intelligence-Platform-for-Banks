@@ -12,28 +12,26 @@ deploy:
     - "include/config/**"
     - "include/service_account.json"
 
+# ✅ global env block so Airflow picks them up
+env:
+  - AIRFLOW__WEBSERVER__BASE_URL=https://8080-cs-839183587140-default.cs-us-east1-dogs.cloudshell.dev
+  - AIRFLOW__WEBSERVER__WEB_SERVER_ALLOWED_HOSTS=8080-cs-839183587140-default.cs-us-east1-dogs.cloudshell.dev,localhost,127.0.0.1
+  - AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
+  - AIRFLOW__WEBSERVER__COOKIE_SECURE=False
+  - AIRFLOW__WEBSERVER__COOKIE_SAMESITE=Lax
+  - AIRFLOW__WEBSERVER__AUTHENTICATE=False
+  - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+  - AIRFLOW__CORE__FERNET_KEY=astronomer_dev_key
+
 services:
   ui:
     command: ui
     ports:
       - 8080:8080
-    environment:
-      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
-      - AIRFLOW__WEBSERVER__BASE_URL=https://8080-cs-468297218788-default.cs-us-east1-dogs.cloudshell.dev
-      - AIRFLOW__WEBSERVER__ALLOWED_HOSTS=8080-cs-468297218788-default.cs-us-east1-dogs.cloudshell.dev,localhost,127.0.0.1
-      - AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
-      - AIRFLOW__WEBSERVER__COOKIE_SECURE=True
-      - AIRFLOW__WEBSERVER__COOKIE_SAMESITE=None
   api:
     command: api
     ports:
       - 8081:8080
-    environment:
-      - AIRFLOW__WEBSERVER__BASE_URL=https://8080-cs-468297218788-default.cs-us-east1-dogs.cloudshell.dev
-      - AIRFLOW__WEBSERVER__ALLOWED_HOSTS=8080-cs-468297218788-default.cs-us-east1-dogs.cloudshell.dev,localhost,127.0.0.1
-      - AIRFLOW__WEBSERVER__ENABLE_PROXY_FIX=True
-      - AIRFLOW__WEBSERVER__COOKIE_SECURE=True
-      - AIRFLOW__WEBSERVER__COOKIE_SAMESITE=None
   scheduler:
     command: scheduler
   triggerer:
