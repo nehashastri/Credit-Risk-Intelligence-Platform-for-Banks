@@ -5,7 +5,7 @@ from airflow.operators.python import get_current_context
 from airflow.exceptions import AirflowSkipException
 import requests, yaml, json, time, uuid
 from jinja2 import Template
-from utils import read_sql
+from utils.io import read_sql
 
 # --------------------------------------------------
 # Utility: Safe Cloud Function invoker
@@ -202,7 +202,7 @@ def credit_risk_pipeline():
             "ticket_number": "CR-001",
             "tags_json": json.dumps({"target": "delinquency_rate", "frequency": "weekly"})
         }
-        s = utils.read_sql(f"{SQL_DIR}/mlops-model-registry.sql")
+        s = read_sql(f"{SQL_DIR}/mlops-model-registry.sql")
         sql = Template(s).render(**model_vals)
         utils.run_execute(sql)
         print("✅ Model registered.")
@@ -234,7 +234,7 @@ def credit_risk_pipeline():
             "model_id": MODEL_ID,
         }
 
-        s = utils.read_sql(f"{SQL_DIR}/mlops-dataset-registry.sql")
+        s = read_sql(f"{SQL_DIR}/mlops-dataset-registry.sql")
         sql = Template(s).render(**dataset_metadata)
         utils.run_execute(sql)
         print("✅ Dataset registered.")
