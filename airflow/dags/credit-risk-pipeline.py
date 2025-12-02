@@ -37,7 +37,7 @@ CF_UPLOAD_YF    = f"https://us-central1-{PROJECT}.cloudfunctions.net/raw_upload_
 CF_LANDING_YF   = f"https://us-central1-{PROJECT}.cloudfunctions.net/landing_load_yfinance_append"
 
 CF_CREATE_ML_DS = f"https://us-central1-{PROJECT}.cloudfunctions.net/create_ml_dataset"
-CF_TRAIN_MODEL  = f"https://us-central1-{PROJECT}.cloudfunctions.net/train-credit-model"
+CF_TRAIN_MODEL  = f"https://us-central1-{PROJECT}.cloudfunctions.net/ml-train-model"
 
 INFERENCE_ENDPOINT = f"https://us-central1-{PROJECT}.cloudfunctions.net/ml_predict_credit"
 
