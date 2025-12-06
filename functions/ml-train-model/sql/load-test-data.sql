@@ -14,5 +14,5 @@ counts AS (
 SELECT
   o.*
 FROM ordered o, counts c
-WHERE o.rn > c.total_rows - 24
+WHERE o.rn > c.total_rows - 100
 ORDER BY year, week;

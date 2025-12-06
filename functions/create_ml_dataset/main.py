@@ -86,14 +86,22 @@ with_group_position AS (
 final AS (
   SELECT 
   week, year,
-  COALESCE(delinq, delinq_prev + (delinq_next - delinq_prev) * delinq_pos / delinq_total) AS delinq,
+  COALESCE(delinq, 
+    CASE WHEN delinq_next IS NULL THEN delinq_prev
+    ELSE delinq_prev + (delinq_next - delinq_prev) * delinq_pos / delinq_total END) AS delinq,
   marketyield2yr, marketyield10yr, inflationrate, mortgagerate30yr,
   fedfundrate_filled AS fedfundrate,
-  COALESCE(cpiurban, cpiurban_prev + (cpiurban_next - cpiurban_prev) * cpiurban_pos / cpiurban_total) AS cpiurban,
+  COALESCE(cpiurban, 
+    CASE WHEN cpiurban_next IS NULL THEN cpiurban_prev
+    ELSE cpiurban_prev + (cpiurban_next - cpiurban_prev) * cpiurban_pos / cpiurban_total END) AS cpiurban,
   unemployrate_filled AS unemployrate,
-  COALESCE(ownedconsumercredit, ownedconsumercredit_prev + (ownedconsumercredit_next - ownedconsumercredit_prev) * ownedconsumercredit_pos / ownedconsumercredit_total) AS ownedconsumercredit,
+  COALESCE(ownedconsumercredit,  
+    CASE WHEN ownedconsumercredit_next IS NULL THEN ownedconsumercredit_prev
+    ELSE ownedconsumercredit_prev + (ownedconsumercredit_next - ownedconsumercredit_prev) * ownedconsumercredit_pos / ownedconsumercredit_total END) AS ownedconsumercredit,
   recessionindicator_filled AS recessionindicator,
-  COALESCE(realgdp, realgdp_prev + (realgdp_next - realgdp_prev) * realgdp_pos / realgdp_total) AS realgdp,
+  COALESCE(realgdp,  
+    CASE WHEN realgdp_next IS NULL THEN realgdp_prev
+    ELSE realgdp_prev + (realgdp_next - realgdp_prev) * realgdp_pos / realgdp_total END) AS realgdp,
   consumerdisc_price, consumerdisc_vol, consumerstaple_price, consumerstaple_vol,
   financial_price, financial_vol, tech_price, tech_vol, energy_price, energy_vol,
   industrial_price, industrial_vol, utilities_price, utilities_vol, health_price, health_vol,
