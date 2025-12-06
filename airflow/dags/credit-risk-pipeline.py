@@ -20,22 +20,14 @@ import math
 PROJECT = "pipeline-882-team-project"
 RAW_DATASET = "raw"
 GOLD_DATASET = "gold"
-RAW_DATASET = "raw"
-GOLD_DATASET = "gold"
 MLOPS_DATASET = "mlops"
-MODEL_ID = "credit_delinquency_model"
 MODEL_ID = "credit_delinquency_model"
 MODEL_NAME = "Credit Delinquency Rate Predictor"
 
 # Cloud Function endpoints
 CF_FETCH_FRED = f"https://us-central1-{PROJECT}.cloudfunctions.net/raw-fetch-fred-append"
 CF_UPLOAD_FRED = f"https://us-central1-{PROJECT}.cloudfunctions.net/raw_upload_fred_append"
-CF_FETCH_FRED = f"https://us-central1-{PROJECT}.cloudfunctions.net/raw-fetch-fred-append"
-CF_UPLOAD_FRED = f"https://us-central1-{PROJECT}.cloudfunctions.net/raw_upload_fred_append"
 CF_LANDING_FRED = f"https://us-central1-{PROJECT}.cloudfunctions.net/landing-load-fred"
-CF_FETCH_YF = f"https://us-central1-{PROJECT}.cloudfunctions.net/raw_fetch_yfinance_append"
-CF_UPLOAD_YF = f"https://us-central1-{PROJECT}.cloudfunctions.net/raw_upload_yfinance_append"
-CF_LANDING_YF = f"https://us-central1-{PROJECT}.cloudfunctions.net/landing_load_yfinance_append"
 CF_FETCH_YF = f"https://us-central1-{PROJECT}.cloudfunctions.net/raw_fetch_yfinance_append"
 CF_UPLOAD_YF = f"https://us-central1-{PROJECT}.cloudfunctions.net/raw_upload_yfinance_append"
 CF_LANDING_YF = f"https://us-central1-{PROJECT}.cloudfunctions.net/landing_load_yfinance_append"
@@ -79,7 +71,6 @@ def invoke_function(url, params=None, method="GET", timeout=180):
         if resp.status_code == 204 or "no new" in resp.text.lower():
             raise AirflowSkipException("No new data.")
 
-
         if resp.status_code >= 400:
             print(f"❌ Request failed ({resp.status_code}): {resp.text}")
             resp.raise_for_status()
@@ -88,7 +79,6 @@ def invoke_function(url, params=None, method="GET", timeout=180):
             return resp.json()
         except json.JSONDecodeError:
             return {"text": resp.text}
-
 
     except AirflowSkipException:
         raise
@@ -129,12 +119,6 @@ def credit_risk_pipeline():
     4. Train multiple model variants via Cloud Functions
     5. Record training runs in BigQuery
     6. Select best-performing model by sMAPE, version, and deploy (policy-based)
-    1. Incremental ingestion (FRED + YFinance) and landing transformations
-    2. Build ML dataset (GOLD layer)
-    3. Register model and dataset metadata
-    4. Train multiple model variants via Cloud Functions
-    5. Record training runs in BigQuery
-    6. Select best-performing model by sMAPE, version, and deploy (policy-based)
     """
 
     # -----------------------------
@@ -143,20 +127,9 @@ def credit_risk_pipeline():
     FRED_CONFIG = "/usr/local/airflow/include/config/fred_series.yaml"
     YFIN_CONFIG = "/usr/local/airflow/include/config/yfinance_tickers.yaml"
     SQL_DIR = "/usr/local/airflow/include/sql"
-    SQL_DIR = "/usr/local/airflow/include/sql"
 
     # Model configuration grid
     model_configs = [
-        {"algorithm": "base"},
-        {"algorithm": "random_forest"},
-        {"algorithm": "xgboost"},
-        {"algorithm": "lightgbm"},
-        {"algorithm": "elastic_net"},
-        {"algorithm": "gradient_boosting"},
-        {"algorithm": "arima"},
-        {"algorithm": "sarimax"},
-        {"algorithm": "varmax"},
-    ]
         {"algorithm": "base"},
         {"algorithm": "random_forest"},
         {"algorithm": "xgboost"},
@@ -173,7 +146,6 @@ def credit_risk_pipeline():
     # -----------------------------
     with open(FRED_CONFIG, "r") as f:
         fred_series = yaml.safe_load(f)["series"]
-
 
     with open(YFIN_CONFIG, "r") as f:
         yfinance_tickers = yaml.safe_load(f)["tickers"]
@@ -273,8 +245,6 @@ def credit_risk_pipeline():
             WHEN MATCHED THEN UPDATE SET
                 model_name = '{vals["model_name"]}',
                 owner = '{vals["owner"]}',
-                model_name = '{vals["model_name"]}',
-                owner = '{vals["owner"]}',
                 business_problem= '{vals["business_problem"].replace("'", "''")}',
                 ticket_number = '{vals["ticket_number"]}',
                 tags_json = '{vals["tags_json"].replace("'", "''")}'
@@ -284,16 +254,7 @@ def credit_risk_pipeline():
                 ('{vals["model_id"]}','{vals["model_name"]}','{vals["owner"]}',
                  '{vals["business_problem"].replace("'", "''")}','{vals["ticket_number"]}',
                  '{vals["tags_json"].replace("'", "''")}', CURRENT_TIMESTAMP());
-                ticket_number = '{vals["ticket_number"]}',
-                tags_json = '{vals["tags_json"].replace("'", "''")}'
-            WHEN NOT MATCHED THEN INSERT
-                (model_id, model_name, owner, business_problem, ticket_number, tags_json, created_at)
-            VALUES
-                ('{vals["model_id"]}','{vals["model_name"]}','{vals["owner"]}',
-                 '{vals["business_problem"].replace("'", "''")}','{vals["ticket_number"]}',
-                 '{vals["tags_json"].replace("'", "''")}', CURRENT_TIMESTAMP());
             """
-
 
         run_execute(sql)
         print("✅ Model registered.")
@@ -306,18 +267,11 @@ def credit_risk_pipeline():
         r = run_fetchone(f"""
         SELECT COUNT(*) AS c
         FROM `{PROJECT}.{GOLD_DATASET}.fact_all_indicators_weekly`
-        SELECT COUNT(*) AS c
-        FROM `{PROJECT}.{GOLD_DATASET}.fact_all_indicators_weekly`
         """)
         row_count = int(r["c"]) if r and "c" in r.keys() else (int(r[0]) if r else 0)
 
         # Count features from a single sample row (by counting JSON keys)
         f = run_fetchone(f"""
-        SELECT COUNT(*) AS f
-        FROM UNNEST(REGEXP_EXTRACT_ALL(
-            TO_JSON_STRING((SELECT AS STRUCT * FROM `{PROJECT}.{GOLD_DATASET}.fact_all_indicators_weekly` LIMIT 1)),
-            r'"[^"]*":'
-        ))
         SELECT COUNT(*) AS f
         FROM UNNEST(REGEXP_EXTRACT_ALL(
             TO_JSON_STRING((SELECT AS STRUCT * FROM `{PROJECT}.{GOLD_DATASET}.fact_all_indicators_weekly` LIMIT 1)),
@@ -344,11 +298,7 @@ def credit_risk_pipeline():
             VALUES
             ('{meta["dataset_id"]}','{meta["model_id"]}','{meta["data_version"]}',
              {meta["row_count"]},{meta["feature_count"]}, CURRENT_TIMESTAMP())
-            VALUES
-            ('{meta["dataset_id"]}','{meta["model_id"]}','{meta["data_version"]}',
-             {meta["row_count"]},{meta["feature_count"]}, CURRENT_TIMESTAMP())
             """
-
 
         run_execute(sql)
         print("✅ Dataset registered.")
@@ -365,7 +315,6 @@ def credit_risk_pipeline():
         """Call CF to train one model; return full training result payload."""
         run_id = f"run_{MODEL_ID}_{cfg['algorithm']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
-        
         # Build query params EXPECTED by Cloud Function
         params = {
             "run_id": run_id,
@@ -373,7 +322,6 @@ def credit_risk_pipeline():
             "algorithm": cfg["algorithm"],
             "dataset_id": ds_meta["dataset_id"],
         }
-        
         
         print(f"🚀 Training {cfg['algorithm']} ...")
         
@@ -417,23 +365,10 @@ def credit_risk_pipeline():
             raise AirflowSkipException(f"Training failed: {model_result.get('error', 'unknown error')}")
         
         params_safe = json_sanitize(model_result.get("params", {}))
-        # Skip if training failed or returned invalid result
-        if not isinstance(model_result, dict) or "run_id" not in model_result:
-            raise AirflowSkipException("Training task failed or returned invalid result")
-        
-        # Skip if the training explicitly failed
-        if model_result.get("status") == "failed":
-            print(f"⚠️ Skipping failed training run: {model_result.get('algorithm', 'unknown')}")
-            raise AirflowSkipException(f"Training failed: {model_result.get('error', 'unknown error')}")
-        
-        params_safe = json_sanitize(model_result.get("params", {}))
         metrics_safe = json_sanitize(model_result.get("metrics", {}))
-        params_json = json.dumps(params_safe, ensure_ascii=False, allow_nan=False).replace("'", "''")
         params_json = json.dumps(params_safe, ensure_ascii=False, allow_nan=False).replace("'", "''")
         metrics_json = json.dumps(metrics_safe, ensure_ascii=False, allow_nan=False).replace("'", "''")
         artifact_path = (model_result.get("artifact", model_result.get("gcs_path","")) or "").replace("'", "''")
-        status_val = model_result.get("status", "completed")
-        
         status_val = model_result.get("status", "completed")
         
         sql = f"""
@@ -451,7 +386,6 @@ def credit_risk_pipeline():
         )
         """
         
-        
         run_execute(sql)
         print(f"✅ Training run recorded: {model_result['run_id']}")
         return {"run_id": model_result["run_id"], "dataset_id": model_result.get("dataset_id", "")}
@@ -459,7 +393,6 @@ def credit_risk_pipeline():
     # -----------------------------
     # Select best, version, deploy
     # -----------------------------
-    @task(trigger_rule="none_failed_min_one_success")
     @task(trigger_rule="none_failed_min_one_success")
     def find_best_model(ds_meta: dict):
         """Find the best completed run by lowest sMAPE and fetch optional artifact path."""
@@ -473,7 +406,6 @@ def credit_risk_pipeline():
         ORDER BY CAST(JSON_VALUE(metrics, '$.smape') AS FLOAT64) ASC
         LIMIT 1
         """
-        
         
         best = run_fetchone(best_sql)
         if not best:
@@ -627,7 +559,6 @@ def credit_risk_pipeline():
         )
         """
         
-        
         run_execute(insert_sql)
         print(f"✅ Model version recorded: {model_version_id} ({status})")
         return {
@@ -664,15 +595,8 @@ def credit_risk_pipeline():
                 FROM `{PROJECT}.{MLOPS_DATASET}.deployment` d
                 JOIN `{PROJECT}.{MLOPS_DATASET}.model_version` mv
                   ON d.model_version_id = mv.model_version_id
-            SET traffic_split = 0.0
-            WHERE deployment_id IN (
-                SELECT d.deployment_id
-                FROM `{PROJECT}.{MLOPS_DATASET}.deployment` d
-                JOIN `{PROJECT}.{MLOPS_DATASET}.model_version` mv
-                  ON d.model_version_id = mv.model_version_id
                 WHERE mv.model_id = '{MODEL_ID}'
                   AND d.traffic_split > 0
-            )
             )
             """
             
@@ -719,17 +643,11 @@ def credit_risk_pipeline():
     # Orchestration
     # -----------------------------
 
-
     # Ingestion flows
     fred_extracts = extract_fred.expand(series_id=fred_series)
     fred_loads = load_fred_to_bq.expand(payload=fred_extracts)
     fred_land = load_fred_landing(fred_loads)
-    fred_loads = load_fred_to_bq.expand(payload=fred_extracts)
-    fred_land = load_fred_landing(fred_loads)
 
-    yf_extracts = extract_yfinance.expand(ticker=yfinance_tickers)
-    yf_loads = load_yfinance_to_bq.expand(payload=yf_extracts)
-    yf_land = load_yfinance_landing(yf_loads)
     yf_extracts = extract_yfinance.expand(ticker=yfinance_tickers)
     yf_loads = load_yfinance_to_bq.expand(payload=yf_extracts)
     yf_land = load_yfinance_landing(yf_loads)
@@ -740,7 +658,6 @@ def credit_risk_pipeline():
 
     # Register model & dataset snapshot
     model_reg = register_model()
-    model_reg = register_model()
     dataset_reg = register_dataset()
     dataset_reg.set_upstream([ml_ds, model_reg])
 
@@ -748,10 +665,8 @@ def credit_risk_pipeline():
     train_results = train_model.partial(ds_meta=dataset_reg).expand(cfg=model_configs)
 
     # Persist training runs (with concurrency limits) - proceed if at least one training succeeds
-    # Persist training runs (with concurrency limits) - proceed if at least one training succeeds
     recorded_runs = register_training_run.expand(model_result=train_results)
 
-    # Select best model after runs are recorded - proceed if at least one was recorded successfully
     # Select best model after runs are recorded - proceed if at least one was recorded successfully
     best = find_best_model(dataset_reg)
     best.set_upstream(recorded_runs)
@@ -759,7 +674,6 @@ def credit_risk_pipeline():
     # Version the best model, then register a deployment row (approved → traffic=1.0, else 0.0)
     mv = register_model_version(best)
     register_deployment(mv)
-
 
 
 # Instantiate DAG
