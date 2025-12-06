@@ -153,13 +153,15 @@ def main():
     st.sidebar.title("📋 Navigation")
     page = st.sidebar.selectbox(
     "Select Page",
-    [
+        [
         "🏠 Home",
         "📊 Data Overview",
         "🔍 Exploratory Data Analysis",
-        "🤖 ML Lifecycle / Model Registry"
-    ]
+        "🤖 ML Lifecycle / Model Registry",
+        "🤖 ML Ops new"
+        ]
     )
+
 
     
     # Initialize BigQuery connector
@@ -196,6 +198,13 @@ def main():
             show_ml_lifecycle()
         except Exception as e:
             st.error(f"Error loading ML Lifecycle page: {str(e)}")
+    elif page == "🤖 ML Ops new":
+        try:
+            from pages.mlops import nlopsnew
+            nlopsnew()
+        except Exception as e:
+            st.error(f"Error loading ML Lifecycle page: {str(e)}")
+
 
 
 def show_home_page(bq_connector, connection_status):
