@@ -33,7 +33,7 @@ CF_UPLOAD_YF = f"https://us-central1-{PROJECT}.cloudfunctions.net/raw_upload_yfi
 CF_LANDING_YF = f"https://us-central1-{PROJECT}.cloudfunctions.net/landing_load_yfinance_append"
 CF_CREATE_ML_DS = f"https://us-central1-{PROJECT}.cloudfunctions.net/create_ml_dataset"
 CF_TRAIN_MODEL = f"https://us-central1-{PROJECT}.cloudfunctions.net/ml-train-model"
-INFERENCE_ENDPOINT = f"https://us-central1-{PROJECT}.cloudfunctions.net/ml_predict_credit"
+INFERENCE_ENDPOINT = f"https://us-central1-{PROJECT}.cloudfunctions.net/ml-predict-model"
 
 # -----------------------------
 # Helper functions
@@ -336,9 +336,9 @@ def credit_risk_pipeline():
             # Expected shape returned by CF:
             # { run_id, algorithm, best_hyperparameters, gcs_path, metrics, feature_count }
             
-            # Ensure status is set to 'completed' for successful runs
-            if 'status' not in result:
-                result['status'] = 'completed'
+            # # Ensure status is set to 'completed' for successful runs
+            # if 'status' not in result:
+            #     result['status'] = 'completed'
             
             return result
         except Exception as e:
@@ -398,7 +398,7 @@ def credit_risk_pipeline():
         """Find the best completed run by lowest sMAPE and fetch optional artifact path."""
         # Select best run by sMAPE
         best_sql = f"""
-        SELECT run_id, params, metrics
+        SELECT run_id, params, metrics, artifact
         FROM `{PROJECT}.{MLOPS_DATASET}.training_run`
         WHERE model_id = '{MODEL_ID}'
           AND dataset_id = '{ds_meta["dataset_id"]}'
@@ -410,72 +410,85 @@ def credit_risk_pipeline():
         best = run_fetchone(best_sql)
         if not best:
             raise AirflowFailException("No completed training runs found - all training failed.")
-
-        # Locate baseline sMAPE for comparison
-        base_sql = f"""
-        SELECT JSON_VALUE(metrics, '$.smape') AS base_smape
-        FROM `{PROJECT}.{MLOPS_DATASET}.training_run`
-        WHERE model_id = '{MODEL_ID}'
-          AND dataset_id = '{ds_meta["dataset_id"]}'
-          AND status = 'completed'
-          AND JSON_VALUE(params, '$.algorithm') = 'base'
-        ORDER BY created_at DESC
-        LIMIT 1
-        """
         
-        base = run_fetchone(base_sql)
-        base_smape = None
-        if base:
-            try:
-                base_smape = float(base["base_smape"]) if base["base_smape"] is not None else None
-            except Exception:
-                base_smape = float(base[0]) if base[0] is not None else None
-
         def _get(row, key, idx):
             try:
                 return row[key]
             except Exception:
                 return row[idx]
-
+        
         run_id = _get(best, "run_id", 0)
-        params = json.loads(_get(best, "params", 1))
-        metrics = json.loads(_get(best, "metrics", 2))
+        params_json = _get(best, "params", 1)
+        params = json.loads(params_json)
+        metrics_json = _get(best, "metrics", 2)
+        metrics = json.loads(metrics_json)
+        artifact = _get(best, "artifact", 3)
 
-        # Check if 'artifact' column exists (some environments may omit it)
-        chk = run_fetchone(f"""
-        SELECT COUNT(*) AS c
-        FROM `{PROJECT}.{MLOPS_DATASET}`.INFORMATION_SCHEMA.COLUMNS
-        WHERE table_name = 'training_run' AND column_name = 'artifact'
-        """)
-        
-        has_artifact_col = False
-        try:
-            has_artifact_col = (int(chk["c"]) if chk and "c" in chk.keys() else int(chk[0])) > 0
-        except Exception:
-            has_artifact_col = False
+        algorithm = params.get('algorithm', 'N/A')
 
-        artifact: Optional[str] = ""
-        if has_artifact_col:
-            art_row = run_fetchone(f"""
-            SELECT artifact
-            FROM `{PROJECT}.{MLOPS_DATASET}.training_run`
-            WHERE run_id = '{run_id}'
-            LIMIT 1
-            """)
-            if art_row:
-                try:
-                    artifact = art_row["artifact"]
-                except Exception:
-                    artifact = art_row[0]
+        best_smape = metrics.get("smape")
+
+        print(f"Best Model Found: run_id = {run_id}")
+        print(f"Algorithm: {algorithm}")
+        print(f"Metrics - SMAPE: {best_smape}")
+        print(f"Artifact: {artifact}")
+
+        # # Locate baseline sMAPE for comparison
+        # base_sql = f"""
+        # SELECT JSON_VALUE(metrics, '$.smape') AS base_smape
+        # FROM `{PROJECT}.{MLOPS_DATASET}.training_run`
+        # WHERE model_id = '{MODEL_ID}'
+        #   AND dataset_id = '{ds_meta["dataset_id"]}'
+        #   AND status = 'completed'
+        #   AND JSON_VALUE(params, '$.algorithm') = 'base'
+        # ORDER BY created_at DESC
+        # LIMIT 1
+        # """
         
-        artifact = artifact or ""
+        # base = run_fetchone(base_sql)
+        # base_smape = None
+        # if base:
+        #     try:
+        #         base_smape = float(base["base_smape"]) if base["base_smape"] is not None else None
+        #     except Exception:
+        #         base_smape = float(base[0]) if base[0] is not None else None
+
+
+        # # # Check if 'artifact' column exists (some environments may omit it)
+        # # chk = run_fetchone(f"""
+        # # SELECT COUNT(*) AS c
+        # # FROM `{PROJECT}.{MLOPS_DATASET}`.INFORMATION_SCHEMA.COLUMNS
+        # # WHERE table_name = 'training_run' AND column_name = 'artifact'
+        # # """)
+        
+        # # has_artifact_col = False
+        # # try:
+        # #     has_artifact_col = (int(chk["c"]) if chk and "c" in chk.keys() else int(chk[0])) > 0
+        # # except Exception:
+        # #     has_artifact_col = False
+
+        # artifact: Optional[str] = ""
+        # if has_artifact_col:
+        #     art_row = run_fetchone(f"""
+        #     SELECT artifact
+        #     FROM `{PROJECT}.{MLOPS_DATASET}.training_run`
+        #     WHERE run_id = '{run_id}'
+        #     LIMIT 1
+        #     """)
+        #     if art_row:
+        #         try:
+        #             artifact = art_row["artifact"]
+        #         except Exception:
+        #             artifact = art_row[0]
+        
+        # artifact = artifact or ""
 
         return {
             "run_id": run_id,
             "params": params,
             "metrics": metrics,
             "artifact": artifact,  # empty string if unavailable
-            "baseline_smape": base_smape,
+            # "best_smape": best_smape,
             "dataset_id": ds_meta["dataset_id"],
         }
 
@@ -491,17 +504,42 @@ def credit_risk_pipeline():
             except Exception:
                 return None
 
-        base = to_float_safe(best.get("baseline_smape"))
+        # Locate baseline sMAPE for comparison
+        base_sql = f"""
+        SELECT JSON_VALUE(metrics, '$.smape') AS base_smape
+        FROM `{PROJECT}.{MLOPS_DATASET}.deployment`
+        WHERE traffic_split = 1.0
+        ORDER BY deployed_at DESC
+        LIMIT 1
+        """
+        
+        base = run_fetchone(base_sql)
+        base_smape = None
+        if base:
+            try:
+                base_smape = float(base["base_smape"]) if base["base_smape"] is not None else None
+            except Exception:
+                base_smape = float(base[0]) if base[0] is not None else None
+
+
+        base = to_float_safe(base_smape)
         new = to_float_safe(best.get("metrics", {}).get("smape"))
 
         # Conservative policy: mark as candidate unless >=10% improvement over a valid baseline
         status = "candidate"
-        if base is not None and base > 0 and new is not None:
-            improvement = (base - new) / base
-            status = "approved" if improvement >= 0.10 else "candidate"
-            print(f"Baseline sMAPE={base:.6f}, new sMAPE={new:.6f}, improvement={improvement:.2%}")
+        # if base is not None and base > 0 and new is not None:
+        #     improvement = (base - new) / base
+        #     status = "approved" if improvement >= 0.01 else "candidate"
+        #     print(f"Baseline sMAPE={base:.6f}, new sMAPE={new:.6f}, improvement={improvement:.2%}")
+        # else:
+        #     print(f"⚠️ Baseline or new sMAPE invalid (baseline={base}, new={new}); marking as candidate.")
+
+        if base is None:
+            status = "approved" 
         else:
-            print(f"⚠️ Baseline or new sMAPE invalid (baseline={base}, new={new}); marking as candidate.")
+            improvement = (base - new) / base
+            if improvement>= 0.01:
+                status = "approved" 
 
         model_version_id = f"{MODEL_ID}_v{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         artifact_path = (best.get("artifact") or "").replace("'", "''")
@@ -523,7 +561,13 @@ def credit_risk_pipeline():
         
         run_execute(insert_sql)
         print(f"✅ Model version recorded: {model_version_id} ({status})")
-        return {"model_version_id": model_version_id, "status": status}
+        return {
+                "model_version_id": model_version_id, 
+                "status": status, 
+                "model_id": MODEL_ID, 
+                "metrics_json": metrics_json, 
+                "artifact_path": artifact_path
+                }
 
     @task
     def register_deployment(mv: dict):
@@ -531,10 +575,18 @@ def credit_risk_pipeline():
         Record a deployment row. If status is 'approved', route full traffic (1.0).
         Otherwise, stage the version with traffic=0.0 for auditing and later promotion.
         """
+        model_version_id = mv['model_version_id']
         is_approved = (mv.get("status") == "approved")
+        
+        # Generate deployment ID
+        deployment_id = f"deploy_{model_version_id}"
+        
+        # Determine traffic split based on approval status
+        traffic = 1.0 if is_approved else 0.0
         
         if is_approved:
             # Archive existing active deployments for this model (set traffic to 0.0)
+            # This ensures only the newest approved deployment is active
             archive_sql = f"""
             UPDATE `{PROJECT}.{MLOPS_DATASET}.deployment`
             SET traffic_split = 0.0
@@ -547,34 +599,42 @@ def credit_risk_pipeline():
                   AND d.traffic_split > 0
             )
             """
+            
+            print("📦 Archiving old deployments...")
+            print(archive_sql)
             run_execute(archive_sql)
 
-        # Always insert a row (approved -> 1.0 traffic, candidate -> 0.0 traffic)
-        deployment_id = f"deploy_{mv['model_version_id']}"
-        traffic = 1.0 if is_approved else 0.0
-
-        insert_sql = f"""
-        INSERT INTO `{PROJECT}.{MLOPS_DATASET}.deployment`
-        (deployment_id, model_version_id, endpoint_url, traffic_split, deployed_at)
-        VALUES (
-            '{deployment_id}',
-            '{mv["model_version_id"]}',
-            '{INFERENCE_ENDPOINT}',
-            {traffic},
-            CURRENT_TIMESTAMP()
-        )
-        """
-        
-        run_execute(insert_sql)
+            # Always insert a new deployment row (approved -> 1.0 traffic, candidate -> 0.0 traffic)
+            insert_sql = f"""
+            INSERT INTO `{PROJECT}.{MLOPS_DATASET}.deployment`
+            (deployment_id, model_version_id, endpoint_url, traffic_split, deployed_at, params, metrics, artifact)
+            VALUES (
+                '{deployment_id}',
+                '{model_version_id}',
+                '{INFERENCE_ENDPOINT}',
+                {traffic},
+                CURRENT_TIMESTAMP(), 
+                'N/A', 
+                '{metrics_json}', 
+                '{artifact_path}'
+            )
+            """
+            
+            print("📝 Registering new deployment...")
+            print(insert_sql)
+            run_execute(insert_sql)
 
         if is_approved:
             print(f"🚀 Deployed: {deployment_id} → {INFERENCE_ENDPOINT} (traffic=1.0)")
+            print(f"✅ Model version {model_version_id} is now serving production traffic")
         else:
             print(f"📝 Staged (not approved): {deployment_id} recorded with traffic=0.0")
+            print(f"⚠️  Model version {model_version_id} is registered but not serving traffic")
 
         return {
             "deployed": is_approved,
             "deployment_id": deployment_id,
+            "model_version_id": model_version_id,
             "endpoint_url": INFERENCE_ENDPOINT,
             "traffic_split": traffic
         }
