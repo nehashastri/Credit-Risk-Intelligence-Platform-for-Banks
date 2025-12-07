@@ -404,6 +404,7 @@ def task(request):
     # ---------------- Return response ----------------
     result = {
         "run_id": run_id,
+        "dataset_id": dataset_id, 
         "algorithm": algorithm,
         "best_hyperparameters": best_hyperparams if algorithm != "base" else {},
         "gcs_path": f"gs://{BUCKET_NAME}/{gcs_path}",
