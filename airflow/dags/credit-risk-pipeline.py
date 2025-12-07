@@ -575,6 +575,10 @@ def credit_risk_pipeline():
         Record a deployment row. If status is 'approved', route full traffic (1.0).
         Otherwise, stage the version with traffic=0.0 for auditing and later promotion.
         """
+        # Extract metrics_json and artifact_path from the passed dictionary
+        metrics_json = mv.get('metrics_json', '{}')
+        artifact_path = mv.get('artifact_path', '')
+
         model_version_id = mv['model_version_id']
         is_approved = (mv.get("status") == "approved")
         
