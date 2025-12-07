@@ -146,20 +146,22 @@ st.markdown("""
 def main():
     # Header
     st.markdown('<h1 class="main-header">🏦 Credit Risk Intelligence Platform</h1>', unsafe_allow_html=True)
-    st.markdown("### Phase 1: Data Integration & Analysis Dashboard")
+    st.markdown("### Phase 2: Machine Learning on Data")
     st.markdown('#### Data Analytics Pipeline Group 11: Donghyeon Na, Yashna Meher, Neha Shastri, Tharfeed Ahmed Unus')
     
     # Sidebar navigation
     st.sidebar.title("📋 Navigation")
     page = st.sidebar.selectbox(
     "Select Page",
-    [
+        [
         "🏠 Home",
         "📊 Data Overview",
         "🔍 Exploratory Data Analysis",
-        "🤖 ML Lifecycle / Model Registry"
-    ]
+        "🤖 ML Lifecycle / Model Registry",
+        "🤖 ML Ops new"
+        ]
     )
+
 
     
     # Initialize BigQuery connector
@@ -196,6 +198,13 @@ def main():
             show_ml_lifecycle()
         except Exception as e:
             st.error(f"Error loading ML Lifecycle page: {str(e)}")
+    elif page == "🤖 ML Ops new":
+        try:
+            from pages.mlops import nlopsnew
+            nlopsnew()
+        except Exception as e:
+            st.error(f"Error loading ML Lifecycle page: {str(e)}")
+
 
 
 def show_home_page(bq_connector, connection_status):
