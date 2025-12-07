@@ -26,10 +26,6 @@ SCENARIO_API_URL = os.getenv(
 # ------------------------------------------------------------
 # Streamlit Setup
 # ------------------------------------------------------------
-st.image(
-    "https://questromworld.bu.edu/ftmba/wp-content/uploads/sites/42/2021/11/Questrom-1-1.png",
-    caption="Credit Risk Intelligence Platform — Scenario Q&A",
-)
 
 st.title("Scenario Q&A — What If Analysis 🤖")
 st.subheader("Ask natural language questions about delinquency under different market conditions")
