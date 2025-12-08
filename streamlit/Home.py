@@ -12,6 +12,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__)))
 from utils.gcp_connect import BigQueryConnector
 from utils.charts import ChartBuilder
 from utils.cmri import CompositeMacroRiskIndex
+from pages.scenario import show_scenario_page
 
 # Page configuration
 st.set_page_config(
@@ -158,7 +159,8 @@ def main():
         "📊 Data Overview",
         "🔍 Exploratory Data Analysis",
         "🤖 ML Lifecycle / Model Registry",
-        "🤖 ML Ops new"
+        "🤖 ML Ops new",
+        "📈 Scenario Forecast",
         ]
     )
 
@@ -204,6 +206,12 @@ def main():
             nlopsnew()
         except Exception as e:
             st.error(f"Error loading ML Lifecycle page: {str(e)}")
+    elif page == "📈 Scenario Forecast":
+        try:
+            from pages.scenario import show_scenario_page
+            show_scenario_page()
+        except Exception as e:
+            st.error(f"Error loading Scenario page: {str(e)}")
 
 
 

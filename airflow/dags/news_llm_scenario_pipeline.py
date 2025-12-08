@@ -9,7 +9,7 @@ import pendulum
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 
-# Variable import (sdk / models 둘 다 지원)
+# Variable import (sdk / models)
 try:
     from airflow.sdk import Variable as AirflowVariable
 except ImportError:

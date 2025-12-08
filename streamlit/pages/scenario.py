@@ -1,135 +1,196 @@
-# ============================================================
-# Page 5 — Scenario Q&A Frontend (Streamlit)
-# ============================================================
-# This page lets users ask questions like:
-# "What will happen if the market falls and we raise interest rates?
-#  How will it affect our target variable?"
-#
-# The actual scenario calculation / simulation is handled by a backend
-# (BigQuery, Airflow, Cloud Function, etc.). This page is just the UI.
-# ============================================================
+# streamlit/pages/scenario.py
 
-import os
-import requests
 import streamlit as st
+import pandas as pd
+import plotly.express as px
+import requests
+from datetime import date, timedelta
 
-# ------------------------------------------------------------
-# CONFIG — Backend endpoint for scenario engine
-# ------------------------------------------------------------
-# Prefer environment variable so you can change without editing code
-SCENARIO_API_URL = os.getenv(
-    "SCENARIO_API_URL",
-    # TODO: replace this with your real Cloud Function / API URL
-    "https://us-central1-your-project-id.cloudfunctions.net/credit_scenario_engine"
+# ----------------------------------------------------------------------
+# Cloud Function endpoint for "precomputed mean scenario" prediction
+#   - This calls ml-predict-model
+#   - It reads BigQuery table fact_all_indicators_weekly_llm_scenario_mean
+# ----------------------------------------------------------------------
+PREDICT_ENDPOINT = st.secrets.get(
+    "PREDICT_ENDPOINT",
+    "https://us-central1-pipeline-882-team-project.cloudfunctions.net/ml-predict-model"
 )
 
-# ------------------------------------------------------------
-# Streamlit Setup
-# ------------------------------------------------------------
-st.image(
-    "https://questromworld.bu.edu/ftmba/wp-content/uploads/sites/42/2021/11/Questrom-1-1.png",
-    caption="Credit Risk Intelligence Platform — Scenario Q&A",
+# ----------------------------------------------------------------------
+# Cloud Function endpoint for real-time "What-if" scenario generation
+#   - This calls ml-generate-scenario
+#   - It uses Gemini + deployed model to run prediction immediately
+# ----------------------------------------------------------------------
+SCENARIO_GEN_ENDPOINT = st.secrets.get(
+    "SCENARIO_GEN_ENDPOINT",
+    "https://us-central1-pipeline-882-team-project.cloudfunctions.net/ml-generate-scenario"
 )
 
-st.title("Scenario Q&A — What If Analysis 🤖")
-st.subheader("Ask natural language questions about delinquency under different market conditions")
 
-# Sidebar
-st.sidebar.header("About this page")
-st.sidebar.markdown(
-    """
-This page is a **front-end only** interface.
+def show_scenario_page():
+    # -------------------------------------------------------
+    # Page header and introductory text
+    # -------------------------------------------------------
+    st.title("📈 Scenario-based Delinquency Forecast")
+    st.caption("Run delinquency predictions from both precomputed and custom scenarios")
 
-- You ask *"what-if"* questions in natural language.
-- The question is sent to a **backend scenario engine** (BigQuery / Airflow / Cloud Function).
-- The backend returns a **textual explanation** of the expected impact on the target variable.
+    # =======================================================
+    # Section A — Use the precomputed LLM mean scenario table
+    # =======================================================
+    st.markdown("### A. Precomputed LLM Scenario (Mean Table)")
 
-Examples:
-- *"If unemployment increases by 2% and interest rates rise by 50 bps, how does delinquency change?"*
-- *"What happens to our delinquency forecast if GDP growth drops to 0%?"*
-"""
-)
+    st.markdown("#### 1️⃣ Select forecast range")
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("**Backend URL in use:**")
-st.sidebar.code(SCENARIO_API_URL, language="text")
+    today = date.today()
+    default_start = today
+    default_end = today + timedelta(weeks=8)
 
-# ------------------------------------------------------------
-# Session State — store chat history for this page
-# ------------------------------------------------------------
-if "scenario_messages" not in st.session_state:
-    st.session_state.scenario_messages = []
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Start date", value=default_start, key="mean_start_date")
+    with col2:
+        end_date = st.date_input("End date", value=default_end, key="mean_end_date")
 
-# ------------------------------------------------------------
-# Backend Call Helper
-# ------------------------------------------------------------
-def call_scenario_engine(question: str) -> str:
-    """
-    Call the backend scenario engine with the user's question.
-    The backend is expected to return JSON like:
-        {"question": "...", "answer": "..."}
-    You can adjust this to match your real API contract.
-    """
-    payload = {
-        "query": question,        # main user question
-        # You can send extra context if needed:
-        # "context": {"user_role": "analyst", "project": "credit_delinquency"}
-    }
-    resp = requests.post(SCENARIO_API_URL, json=payload, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
-    # Fallback to empty string if key is missing
-    return data.get("answer", "") or data.get("result", "") or "No answer returned from backend."
+    st.markdown("#### 2️⃣ Run prediction from mean table")
 
-# ------------------------------------------------------------
-# Main Chat UI
-# ------------------------------------------------------------
-st.markdown("---")
-st.markdown("### Ask a scenario question")
+    if st.button("🚀 Run Forecast from Mean Scenario", key="btn_mean_scenario"):
+        with st.spinner("Calling model prediction API using mean scenario..."):
+            try:
+                params = {
+                    "source": "scenario_mean",
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                    "limit": 200,
+                }
 
-with st.expander("💡 Example questions", expanded=False):
+                resp = requests.get(PREDICT_ENDPOINT, params=params, timeout=60)
+
+                if resp.status_code != 200:
+                    st.error(f"API error {resp.status_code}: {resp.text}")
+                    return
+
+                data = resp.json()
+                preds = data.get("predictions", [])
+
+                if not preds:
+                    st.warning("No predictions returned from the API.")
+                    return
+
+                df = pd.DataFrame(preds)
+                st.success(f"✅ Received {len(df)} predictions")
+
+                # Line chart for predicted rate
+                if "predicted_delinquency_rate" in df.columns:
+                    fig = px.line(
+                        df,
+                        x="date",
+                        y="predicted_delinquency_rate",
+                        title="Predicted Delinquency Rate (Precomputed Scenario Mean)",
+                        markers=True,
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                # Show raw results
+                st.markdown("#### 🔍 Raw Prediction Data")
+                st.dataframe(df, use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Error calling prediction endpoint: {e}")
+
+    st.markdown("---")
+
+    # =======================================================
+    # Section B — Real-time What-if Scenario (Gemini + model)
+    # =======================================================
+    st.markdown("### B. Real-time What-if Scenario (Gemini)")
+
     st.markdown(
         """
-- *"If the stock market falls by 10% and we raise interest rates by 0.5%, how will it impact delinquency next quarter?"*  
-- *"What if unemployment goes above 6% but we keep rates constant — how sensitive is delinquency?"*  
-- *"How do lower GDP growth and higher inflation together affect our delinquency forecasts?"*
-        """
+Describe a scenario in natural language, and we will:
+1. Use **Gemini** to generate a forward macro scenario (8 weeks), and  
+2. Run the **deployed delinquency model** on the generated scenario.
+"""
     )
 
-# Replay past conversation
-for message in st.session_state.scenario_messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    st.markdown("#### 3️⃣ Describe the custom scenario")
 
-# Chat input (bottom of the page)
-prompt = st.chat_input("Describe a scenario (e.g., market fall + higher interest rates)…")
+    col_left, col_right = st.columns([2, 1])
 
-if prompt:
-    # Show user message
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    with col_right:
+        interest_rate = st.slider("Interest rate (%)", 0.0, 10.0, 3.5, 0.25)
+        unemployment_delta = st.slider("Unemployment change (pp)", -3.0, 5.0, 1.0, 0.5)
 
-    # Save user message to history
-    st.session_state.scenario_messages.append(
-        {"role": "user", "content": prompt}
+    with col_left:
+        default_scenario_text = (
+            f"If the interest rate is set to {interest_rate:.2f}% "
+            f"and unemployment increases by {unemployment_delta:.1f} percentage points, "
+            "how should macro indicators evolve over the next 8 weeks?"
+        )
+        scenario_text = st.text_area(
+            "Scenario description",
+            value=default_scenario_text,
+            height=120,
+        )
+
+    horizon_weeks = st.number_input(
+        "Prediction horizon (weeks)",
+        min_value=4,
+        max_value=16,
+        value=8,
+        step=1,
     )
 
-    # Call backend and display answer
-    try:
-        with st.chat_message("assistant"):
-            with st.spinner("Analyzing scenario with backend engine…"):
-                answer = call_scenario_engine(prompt)
-                st.markdown(answer)
+    st.markdown("#### 4️⃣ Generate scenario and run model")
 
-        # Save assistant message
-        st.session_state.scenario_messages.append(
-            {"role": "assistant", "content": answer}
-        )
+    if st.button("🤖 Generate Scenario & Predict", key="btn_custom_scenario"):
+        with st.spinner("Calling Gemini + deployed model..."):
+            try:
+                payload = {
+                    "scenario_text": scenario_text,
+                    "horizon_weeks": int(horizon_weeks),
+                }
 
-    except Exception as e:
-        error_msg = f"❌ Error calling scenario engine: {e}"
-        with st.chat_message("assistant"):
-            st.error(error_msg)
-        st.session_state.scenario_messages.append(
-            {"role": "assistant", "content": error_msg}
-        )
+                resp = requests.post(SCENARIO_GEN_ENDPOINT, json=payload, timeout=90)
+
+                if resp.status_code != 200:
+                    st.error(f"Scenario API error {resp.status_code}: {resp.text}")
+                    return
+
+                data = resp.json()
+                preds = data.get("predictions", [])
+                scenario_rows = data.get("scenario_rows", [])
+
+                if not preds:
+                    st.warning("No predictions returned.")
+                    return
+
+                df_pred = pd.DataFrame(preds)
+
+                st.success(
+                    f"✅ Scenario generated and predictions produced: {len(df_pred)} rows "
+                    f"(deployment={data.get('deployment_id')})"
+                )
+
+                # Predicted delinquency chart
+                if "predicted_delinquency_rate" in df_pred.columns:
+                    fig = px.line(
+                        df_pred,
+                        x="date",
+                        y="predicted_delinquency_rate",
+                        title="Predicted Delinquency Rate (Custom Scenario)",
+                        markers=True,
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                # Raw prediction table
+                st.markdown("#### 🔍 Raw Prediction Data (Custom Scenario)")
+                st.dataframe(df_pred, use_container_width=True)
+
+                # Show generated macro scenario
+                if scenario_rows:
+                    st.markdown("#### 🧠 LLM-generated Macro Scenario (Model Input)")
+                    df_scenario = pd.DataFrame(scenario_rows)
+                    st.dataframe(df_scenario, use_container_width=True)
+
+            except Exception as e:
+                st.error(f"Error calling scenario generation endpoint: {e}")
