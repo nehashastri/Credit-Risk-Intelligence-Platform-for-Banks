@@ -110,7 +110,7 @@ def get_current_deployment():
     """
     bq = get_bq()
     query = f"""
-        SELECT 
+        SELECT
             d.deployment_id,
             d.model_version_id,
             d.endpoint_url,
@@ -119,9 +119,9 @@ def get_current_deployment():
             mv.metrics_json,
             tr.params
         FROM `{PROJECT_ID}.{MLOPS_DATASET}.deployment` d
-        JOIN `{PROJECT_ID}.{MLOPS_DATASET}.model_version` mv 
+        JOIN `{PROJECT_ID}.{MLOPS_DATASET}.model_version` mv
             ON d.model_version_id = mv.model_version_id
-        JOIN `{PROJECT_ID}.{MLOPS_DATASET}.training_run` tr 
+        JOIN `{PROJECT_ID}.{MLOPS_DATASET}.training_run` tr
             ON mv.training_run_id = tr.run_id
         WHERE d.traffic_split > 0
           AND mv.model_id = 'credit_delinquency_model'
