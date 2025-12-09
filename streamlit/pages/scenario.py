@@ -13,32 +13,31 @@ from datetime import date, timedelta
 # ----------------------------------------------------------------------
 PREDICT_ENDPOINT = st.secrets.get(
     "PREDICT_ENDPOINT",
-    "https://us-central1-pipeline-882-team-project.cloudfunctions.net/ml-predict-model"
+    "https://us-central1-pipeline-882-team-project.cloudfunctions.net/ml-predict-model",
 )
 
 # ----------------------------------------------------------------------
 # Cloud Function endpoint for real-time "What-if" scenario generation
 #   - This calls ml-generate-scenario
-#   - It uses Gemini + deployed model to run prediction immediately
+#   - It uses LLM + deployed model to run prediction immediately
 # ----------------------------------------------------------------------
 SCENARIO_GEN_ENDPOINT = st.secrets.get(
     "SCENARIO_GEN_ENDPOINT",
-    "https://us-central1-pipeline-882-team-project.cloudfunctions.net/ml-generate-scenario"
+    "https://us-central1-pipeline-882-team-project.cloudfunctions.net/ml-generate-scenario",
 )
 
 
 def show_scenario_page():
-    # -------------------------------------------------------
-    # Page header and introductory text
-    # -------------------------------------------------------
+    # =======================================================
+    # Page header and description
+    # =======================================================
     st.title("📈 Scenario-based Delinquency Forecast")
     st.caption("Run delinquency predictions from both precomputed and custom scenarios")
 
     # =======================================================
-    # Section A — Use the precomputed LLM mean scenario table
+    # Section A — Precomputed LLM mean scenario
     # =======================================================
     st.markdown("### A. Precomputed LLM Scenario (Mean Table)")
-
     st.markdown("#### 1️⃣ Select forecast range")
 
     today = date.today()
@@ -47,7 +46,9 @@ def show_scenario_page():
 
     col1, col2 = st.columns(2)
     with col1:
-        start_date = st.date_input("Start date", value=default_start, key="mean_start_date")
+        start_date = st.date_input(
+            "Start date", value=default_start, key="mean_start_date"
+        )
     with col2:
         end_date = st.date_input("End date", value=default_end, key="mean_end_date")
 
@@ -79,7 +80,7 @@ def show_scenario_page():
                 df = pd.DataFrame(preds)
                 st.success(f"✅ Received {len(df)} predictions")
 
-                # Line chart for predicted rate
+                # Line chart for predicted delinquency rate
                 if "predicted_delinquency_rate" in df.columns:
                     fig = px.line(
                         df,
@@ -90,9 +91,14 @@ def show_scenario_page():
                     )
                     st.plotly_chart(fig, use_container_width=True)
 
-                # Show raw results
+                # Raw results table (hide actual_delinquency_rate, week, year)
                 st.markdown("#### 🔍 Raw Prediction Data")
-                st.dataframe(df, use_container_width=True)
+
+                drop_cols = ["actual_delinquency_rate", "week", "year"]
+                display_cols = [c for c in df.columns if c not in drop_cols]
+                df_display = df[display_cols].copy()
+
+                st.dataframe(df_display, use_container_width=True)
 
             except Exception as e:
                 st.error(f"Error calling prediction endpoint: {e}")
@@ -100,13 +106,14 @@ def show_scenario_page():
     st.markdown("---")
 
     # =======================================================
-    # Section B — Real-time What-if Scenario (Gemini + model)
+    # Section B — Real-time What-if Scenario
     # =======================================================
     st.markdown("### B. Real-time What-if Scenario (Gemini)")
 
     st.markdown(
         """
 Describe a scenario in natural language, and we will:
+
 1. Use **Gemini** to generate a forward macro scenario (8 weeks), and  
 2. Run the **deployed delinquency model** on the generated scenario.
 """
@@ -118,7 +125,9 @@ Describe a scenario in natural language, and we will:
 
     with col_right:
         interest_rate = st.slider("Interest rate (%)", 0.0, 10.0, 3.5, 0.25)
-        unemployment_delta = st.slider("Unemployment change (pp)", -3.0, 5.0, 1.0, 0.5)
+        unemployment_delta = st.slider(
+            "Unemployment change (pp)", -3.0, 5.0, 1.0, 0.5
+        )
 
     with col_left:
         default_scenario_text = (
@@ -143,14 +152,16 @@ Describe a scenario in natural language, and we will:
     st.markdown("#### 4️⃣ Generate scenario and run model")
 
     if st.button("🤖 Generate Scenario & Predict", key="btn_custom_scenario"):
-        with st.spinner("Calling Gemini + deployed model..."):
+        with st.spinner("Calling OpenAI API + deployed model..."):
             try:
                 payload = {
                     "scenario_text": scenario_text,
                     "horizon_weeks": int(horizon_weeks),
                 }
 
-                resp = requests.post(SCENARIO_GEN_ENDPOINT, json=payload, timeout=90)
+                resp = requests.post(
+                    SCENARIO_GEN_ENDPOINT, json=payload, timeout=90
+                )
 
                 if resp.status_code != 200:
                     st.error(f"Scenario API error {resp.status_code}: {resp.text}")
@@ -171,7 +182,7 @@ Describe a scenario in natural language, and we will:
                     f"(deployment={data.get('deployment_id')})"
                 )
 
-                # Predicted delinquency chart
+                # Line chart for predicted delinquency rate
                 if "predicted_delinquency_rate" in df_pred.columns:
                     fig = px.line(
                         df_pred,
@@ -182,11 +193,22 @@ Describe a scenario in natural language, and we will:
                     )
                     st.plotly_chart(fig, use_container_width=True)
 
-                # Raw prediction table
-                st.markdown("#### 🔍 Raw Prediction Data (Custom Scenario)")
-                st.dataframe(df_pred, use_container_width=True)
+                # Raw prediction table (only the columns we want)
+                st.markdown("#### 🔍 Raw Prediction Data")
 
-                # Show generated macro scenario
+                base_display_cols = ["date", "predicted_delinquency_rate"]
+                display_cols = [c for c in base_display_cols if c in df_pred.columns]
+
+                df_display = df_pred[display_cols].copy()
+
+                if "date" in df_display.columns:
+                    df_display["date"] = pd.to_datetime(
+                        df_display["date"]
+                    ).dt.strftime("%Y-%m-%d")
+
+                st.dataframe(df_display, use_container_width=True)
+
+                # Show LLM-generated macro scenario used as model input
                 if scenario_rows:
                     st.markdown("#### 🧠 LLM-generated Macro Scenario (Model Input)")
                     df_scenario = pd.DataFrame(scenario_rows)

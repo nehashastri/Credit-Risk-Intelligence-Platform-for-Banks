@@ -15,22 +15,15 @@ import re
 # =============================================================================
 # Global Configuration
 # =============================================================================
-# Project ID for BigQuery and GCS access
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "pipeline-882-team-project")
-
-# Mlops BigQuery dataset (stores model deployments, versions, training runs)
 MLOPS_DATASET = "mlops"
-
-# GOLD BigQuery dataset (stores historical aggregate features)
 GOLD_DATASET = "gold"
 
-# OpenAI API key is expected to be provided by GCP Secret Manager
+# OpenAI API key (should be injected via Secret Manager -> env var)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-# Default LLM model name (can be overridden via environment variable)
 OPENAI_MODEL = os.getenv("OPENAI_MODEL_NAME", "gpt-4.1-mini")
 
-# Default bucket storing model artifacts (joblib serialized models)
+# Default bucket storing model artifacts
 DEFAULT_BUCKET = os.getenv("MODEL_BUCKET", "pipeline-882-team-project-models")
 
 
@@ -38,10 +31,7 @@ DEFAULT_BUCKET = os.getenv("MODEL_BUCKET", "pipeline-882-team-project-models")
 # Utility Helpers
 # =============================================================================
 def safe_to_float(x):
-    """
-    Safely convert a value to float. Return None if conversion fails
-    or results in NaN/inf. Used for numeric cleanup.
-    """
+    """Safely convert a value to float; return None if invalid."""
     try:
         v = float(x)
         if math.isnan(v) or math.isinf(v):
@@ -52,16 +42,14 @@ def safe_to_float(x):
 
 
 def get_bq():
-    """
-    Create a new BigQuery client using the configured project ID.
-    """
+    """Create a BigQuery client for the configured project."""
     return bigquery.Client(project=PROJECT_ID)
 
 
 def get_openai_client():
     """
-    Create an OpenAI client instance using the API key loaded from environment.
-    This will raise an error if the environment variable is not set.
+    Create an OpenAI client using the API key from environment.
+    Raises a RuntimeError if the key is missing.
     """
     if not OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY environment variable is not set.")
@@ -70,8 +58,8 @@ def get_openai_client():
 
 def load_model_from_gcs(artifact_path: str):
     """
-    Load a trained model object from a GCS URI.
-    Expected artifact_path format: gs://bucket/path/to/model.pkl
+    Load a model from a GCS artifact path.
+    Expected format: gs://bucket/path/to/model.pkl
     """
     from joblib import load as joblib_load
 
@@ -98,19 +86,15 @@ def load_model_from_gcs(artifact_path: str):
 
 def get_current_deployment():
     """
-    Query BigQuery MLOps dataset to retrieve the most recent active deployment
-    (traffic_split > 0) for the model_id='credit_delinquency_model'.
+    Fetch the most recent active deployment for 'credit_delinquency_model'.
 
-    Returns a dictionary containing:
-      - deployment_id
-      - model_version_id
-      - artifact_path
-      - metrics_json
-      - algorithm name
+    Returns:
+        dict with deployment_id, model_version_id, artifact_path,
+        metrics_json, algorithm.
     """
     bq = get_bq()
     query = f"""
-        SELECT
+        SELECT 
             d.deployment_id,
             d.model_version_id,
             d.endpoint_url,
@@ -119,9 +103,9 @@ def get_current_deployment():
             mv.metrics_json,
             tr.params
         FROM `{PROJECT_ID}.{MLOPS_DATASET}.deployment` d
-        JOIN `{PROJECT_ID}.{MLOPS_DATASET}.model_version` mv
+        JOIN `{PROJECT_ID}.{MLOPS_DATASET}.model_version` mv 
             ON d.model_version_id = mv.model_version_id
-        JOIN `{PROJECT_ID}.{MLOPS_DATASET}.training_run` tr
+        JOIN `{PROJECT_ID}.{MLOPS_DATASET}.training_run` tr 
             ON mv.training_run_id = tr.run_id
         WHERE d.traffic_split > 0
           AND mv.model_id = 'credit_delinquency_model'
@@ -153,18 +137,16 @@ def get_current_deployment():
 # =============================================================================
 def load_hist_and_features():
     """
-    Load the most recent 24 weeks from the GOLD historical feature table:
-        gold.fact_all_indicators_weekly
+    Load the most recent 24 weeks from gold.fact_all_indicators_weekly.
 
     Steps:
-      1. Query the last 24 rows sorted by (year DESC, week DESC)
-      2. Re-sort them back to ascending chronological order
-      3. Extract the feature column list (excluding date/year/week/target)
-      4. Ensure 'rn' exists as a stable index for model input
+      1. Query last 24 rows (year DESC, week DESC)
+      2. Sort ascending by (year, week)
+      3. Build feature list (exclude date/year/week/target columns)
+      4. Ensure 'rn' exists as stable index.
 
     Returns:
-      - hist_df: DataFrame of 24 historical rows
-      - feature_cols: list of model feature column names
+      hist_df, feature_cols
     """
     bq = get_bq()
 
@@ -201,11 +183,9 @@ def load_hist_and_features():
 
 def load_recent_news(limit=30):
     """
-    Load the most recent economic news articles from:
-        landing.news_articles
+    Load recent economic news from landing.news_articles (last 30 days).
 
-    Returns a structured list of items containing:
-      published_at, title, topic, score, snippet
+    Returns list of records: published_at, title, topic, score, snippet.
     """
     bq = get_bq()
     sql = f"""
@@ -240,11 +220,13 @@ def load_recent_news(limit=30):
 # =============================================================================
 def strip_markdown_code_fence(text: str) -> str:
     """
-    Remove possible markdown code fences around JSON output:
+    Remove markdown code fences around JSON output:
+
         ```json
         { ... }
         ```
-    This function extracts only the JSON body.
+
+    Returns the inner JSON string only.
     """
     t = text.strip()
     if t.startswith("```"):
@@ -261,32 +243,18 @@ def call_llm_for_scenario(
     horizon_weeks: int = 8,
 ):
     """
-    Use the OpenAI completion API to generate a plausible forward scenario
-    for macroeconomic features over N weeks.
+    Use the OpenAI Chat Completions API to generate a forward macro scenario.
 
-    Prompt Includes:
-      - Historical feature rows (last 8 weeks)
-      - Recent economic news (optional context)
-      - User-provided scenario text (e.g., change in unemployment rate)
-      - Weekly feature schema
+    Input:
+      - feature_cols: list of feature column names
+      - hist_sample_df: small window of recent historical data
+      - news_items: recent news list
+      - scenario_text: user description
+      - horizon_weeks: number of future weeks
 
-    Expected Output Format:
-    {
-      "rows": [
-        {
-          "date": "YYYY-MM-DD",
-          "<feature1>": <numeric>,
-          ...
-        },
-        ...
-      ]
-    }
-
-    The function:
-      1. Builds a prompt with system/user roles
-      2. Calls OpenAI Chat Completions
-      3. Parses JSON output
-      4. Returns scenario rows
+    Output:
+      list of rows:
+        { "date": "YYYY-MM-DD", "<feature1>": 0.0, ... }
     """
     client = get_openai_client()
 
@@ -320,7 +288,7 @@ Rules:
 - "date" must be a valid ISO date.
 - Include ALL feature columns.
 - Use ONLY numeric values.
-- No target/delinquency.
+- Do NOT include any target or delinquency variables.
 """
 
     user_prompt = f"""
@@ -328,10 +296,10 @@ Weekly schema:
 - date
 - Features: {feature_cols}
 
-Recent historical data:
+Recent historical data (last few weeks):
 {json.dumps(hist_sample, indent=2)}
 
-Recent news:
+Recent news (last 30 days):
 {news_text}
 
 User scenario:
@@ -339,8 +307,9 @@ User scenario:
 
 Requirements:
 - Generate {horizon_weeks} future weekly rows.
-- Begin from the next week after the most recent historical date.
-- Include ALL feature columns listed above.
+- Start from the next plausible week after the last historical date.
+- Use realistic values consistent with the scenario and historical trends.
+- Fill ALL feature columns listed above.
 - Return ONLY the JSON object described.
 """
 
@@ -374,21 +343,26 @@ Requirements:
 @functions_framework.http
 def task(request):
     """
-    HTTP Cloud Function for scenario simulation + prediction.
+    HTTP Cloud Function: generate an LLM-based macro scenario and run model
+    predictions on top of it.
 
-    Expected JSON body:
+    Request JSON:
     {
-      "scenario_text": "If unemployment rises by 1 pp...",
+      "scenario_text": "...",
       "horizon_weeks": 8
     }
 
-    Steps:
-      1. Load historical data for feature context
-      2. Load recent economic news
-      3. Use LLM to generate forward macro scenario
-      4. Load deployed model artifact
-      5. Predict delinquency on generated scenario
-      6. Return JSON response
+    Response JSON:
+    {
+      "deployment_id": "...",
+      "model_version_id": "...",
+      "algorithm": "...",
+      "scenario_rows": [...],
+      "predictions": [...],
+      "horizon_weeks": 8,
+      "feature_cols": [...],
+      "timestamp": "..."
+    }
     """
     try:
         try:
@@ -403,11 +377,11 @@ def task(request):
             err = {"error": "scenario_text is required."}
             return json.dumps(err), 400, {"Content-Type": "application/json"}
 
-        # Load historical data and extract feature schema
+        # 1) Load historical data and feature schema
         hist_df, feature_cols = load_hist_and_features()
         news_items = load_recent_news(limit=30)
 
-        # Generate scenario (forward rows)
+        # 2) Generate scenario via LLM
         scenario_rows = call_llm_for_scenario(
             feature_cols=feature_cols,
             hist_sample_df=hist_df,
@@ -420,7 +394,7 @@ def task(request):
         if "date" not in scenario_df.columns:
             raise RuntimeError("Scenario rows are missing 'date' column.")
 
-        # Retrieve current deployed model metadata
+        # 3) Load current deployed model metadata
         deployment_meta = get_current_deployment()
         algorithm = deployment_meta["algorithm"]
         artifact_path = deployment_meta["artifact_path"]
@@ -428,7 +402,7 @@ def task(request):
         model = None
         baseline_value = None
 
-        # Load model based on algorithm type
+        # 4) Load model artifact
         if algorithm == "base":
             from joblib import load as joblib_load
 
@@ -445,23 +419,21 @@ def task(request):
 
             baseline_model = joblib_load(buf)
             baseline_value = baseline_model.get("value", 0.0)
-
         else:
             model = load_model_from_gcs(artifact_path)
 
-        # Ensure all model feature columns exist in scenario_df
+        # 5) Ensure all feature columns exist
         for c in feature_cols:
             if c not in scenario_df.columns:
                 scenario_df[c] = np.nan
 
-        # Ensure 'rn' exists as an index
         if "rn" in feature_cols:
             scenario_df["rn"] = np.arange(len(scenario_df))
 
         X = scenario_df[feature_cols].copy()
         X = X.fillna(0.0)
 
-        # Predict values
+        # 6) Run predictions
         if algorithm == "base":
             if baseline_value is None:
                 baseline_value = 0.0
@@ -469,7 +441,7 @@ def task(request):
         else:
             preds = model.predict(X)
 
-        # Build prediction output
+        # 7) Build prediction output
         result_df = pd.DataFrame(
             {
                 "date": scenario_df["date"],
@@ -498,5 +470,5 @@ def task(request):
 
     except Exception as e:
         err = {"error": "Internal error", "details": str(e)}
-        print(f"ml-generate-scenario error: {err}")
+        print(f"❌ ml-generate-scenario error: {err}")
         return json.dumps(err), 500, {"Content-Type": "application/json"}
