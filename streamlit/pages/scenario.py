@@ -38,11 +38,17 @@ def show_scenario_page():
     # Section A — Use the precomputed LLM mean scenario table
     # =======================================================
     st.markdown("### A. Precomputed LLM Scenario (Mean Table)")
+    
+    st.info(
+        "💡 **Tip:** This section reads from the precomputed scenario table. "
+        "If you get a 'No data found' error, try adjusting the date range to include dates where data exists in the table."
+    )
 
     st.markdown("#### 1️⃣ Select forecast range")
 
     today = date.today()
-    default_start = today
+    # Use a past date as default start to ensure data exists
+    default_start = today - timedelta(weeks=1)
     default_end = today + timedelta(weeks=8)
 
     col1, col2 = st.columns(2)
@@ -50,6 +56,11 @@ def show_scenario_page():
         start_date = st.date_input("Start date", value=default_start, key="mean_start_date")
     with col2:
         end_date = st.date_input("End date", value=default_end, key="mean_end_date")
+    
+    # Validate date range
+    if start_date > end_date:
+        st.error("⚠️ Start date must be before end date.")
+        st.stop()
 
     st.markdown("#### 2️⃣ Run prediction from mean table")
 
@@ -65,8 +76,28 @@ def show_scenario_page():
 
                 resp = requests.get(PREDICT_ENDPOINT, params=params, timeout=60)
 
-                if resp.status_code != 200:
-                    st.error(f"API error {resp.status_code}: {resp.text}")
+                if resp.status_code == 404:
+                    error_data = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {}
+                    error_msg = error_data.get("error", "No data found")
+                    st.warning(f"⚠️ {error_msg}")
+                    st.info(
+                        f"**Troubleshooting tips:**\n"
+                        f"- Try adjusting the date range (currently: {start_date} to {end_date})\n"
+                        f"- The table `fact_all_indicators_weekly_llm_scenario_mean` may not have data for this date range\n"
+                        f"- Check if the table exists and contains data in BigQuery"
+                    )
+                    return
+                elif resp.status_code != 200:
+                    error_text = resp.text
+                    try:
+                        error_data = resp.json()
+                        error_msg = error_data.get("error", error_text)
+                        error_details = error_data.get("details", "")
+                        st.error(f"❌ API error {resp.status_code}: {error_msg}")
+                        if error_details:
+                            st.error(f"Details: {error_details}")
+                    except:
+                        st.error(f"❌ API error {resp.status_code}: {error_text}")
                     return
 
                 data = resp.json()
@@ -80,9 +111,14 @@ def show_scenario_page():
                 st.success(f"✅ Received {len(df)} predictions")
 
                 # Line chart for predicted rate
-                if "predicted_delinquency_rate" in df.columns:
+                if "predicted_delinquency_rate" in df.columns and "date" in df.columns:
+                    # Convert date column to datetime if it's a string
+                    df_plot = df.copy()
+                    if df_plot["date"].dtype == "object":
+                        df_plot["date"] = pd.to_datetime(df_plot["date"], errors="coerce")
+                    
                     fig = px.line(
-                        df,
+                        df_plot,
                         x="date",
                         y="predicted_delinquency_rate",
                         title="Predicted Delinquency Rate (Precomputed Scenario Mean)",
@@ -152,8 +188,35 @@ Describe a scenario in natural language, and we will:
 
                 resp = requests.post(SCENARIO_GEN_ENDPOINT, json=payload, timeout=90)
 
-                if resp.status_code != 200:
-                    st.error(f"Scenario API error {resp.status_code}: {resp.text}")
+                if resp.status_code == 500:
+                    error_text = resp.text
+                    try:
+                        error_data = resp.json()
+                        error_msg = error_data.get("error", error_text)
+                        error_details = error_data.get("details", "")
+                        st.error(f"❌ Server error {resp.status_code}: {error_msg}")
+                        if error_details:
+                            st.error(f"Details: {error_details}")
+                            if "db-dtypes" in error_details.lower():
+                                st.info(
+                                    "**Note:** This error indicates the Cloud Function needs the `db-dtypes` package. "
+                                    "This is a backend dependency issue that needs to be fixed in the Cloud Function deployment. "
+                                    "Please check the Cloud Function's requirements.txt file."
+                                )
+                    except:
+                        st.error(f"❌ Server error {resp.status_code}: {error_text}")
+                    return
+                elif resp.status_code != 200:
+                    error_text = resp.text
+                    try:
+                        error_data = resp.json()
+                        error_msg = error_data.get("error", error_text)
+                        error_details = error_data.get("details", "")
+                        st.error(f"❌ API error {resp.status_code}: {error_msg}")
+                        if error_details:
+                            st.error(f"Details: {error_details}")
+                    except:
+                        st.error(f"❌ API error {resp.status_code}: {error_text}")
                     return
 
                 data = resp.json()
@@ -172,9 +235,14 @@ Describe a scenario in natural language, and we will:
                 )
 
                 # Predicted delinquency chart
-                if "predicted_delinquency_rate" in df_pred.columns:
+                if "predicted_delinquency_rate" in df_pred.columns and "date" in df_pred.columns:
+                    # Convert date column to datetime if it's a string
+                    df_pred_plot = df_pred.copy()
+                    if df_pred_plot["date"].dtype == "object":
+                        df_pred_plot["date"] = pd.to_datetime(df_pred_plot["date"], errors="coerce")
+                    
                     fig = px.line(
-                        df_pred,
+                        df_pred_plot,
                         x="date",
                         y="predicted_delinquency_rate",
                         title="Predicted Delinquency Rate (Custom Scenario)",
