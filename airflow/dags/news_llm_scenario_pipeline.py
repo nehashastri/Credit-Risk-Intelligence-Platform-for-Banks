@@ -24,7 +24,15 @@ from openai import OpenAI  # pip install openai
 # -----------------------------
 ET = pendulum.timezone("America/New_York")
 PROJECT_ID = os.getenv("GCP_PROJECT_ID", "pipeline-882-team-project")
-BQ_CLIENT = bigquery.Client(project=PROJECT_ID)
+
+
+def get_bq_client():
+    """
+    Create a BigQuery client at runtime (inside tasks),
+    not at import time, to avoid issues in test/mocked environments
+    such as Astronomer DAG integrity checks.
+    """
+    return bigquery.Client(project=PROJECT_ID)
 
 
 # -----------------------------
@@ -86,6 +94,9 @@ def generate_llm_scenarios(**context):
     5) Insert mean and std scenarios into dedicated BigQuery tables
     """
 
+    # Create BigQuery client at runtime (important for Astro tests)
+    bq_client = get_bq_client()
+
     # ------------------------------------
     # 1. Load recent 30 days of news
     # ------------------------------------
@@ -105,14 +116,14 @@ def generate_llm_scenarios(**context):
     LIMIT 200
     """
 
-    news_rows = list(BQ_CLIENT.query(sql_news).result())
+    news_rows = list(bq_client.query(sql_news).result())
     news_items = [
         {
             "published_at": str(r["published_at"]),
             "title": r["title"],
             "topic": r.get("topic") or "",
             "score": r.get("score"),
-            # snippet을 요약/본문처럼 사용
+            # Use snippet as a short summary / content
             "summary": r.get("snippet") or "",
             "content": r.get("snippet") or "",
         }
@@ -139,7 +150,7 @@ def generate_llm_scenarios(**context):
     ORDER BY year, week
     """
 
-    hist_rows = list(BQ_CLIENT.query(sql_hist).result())
+    hist_rows = list(bq_client.query(sql_hist).result())
     if not hist_rows:
         raise RuntimeError("No historical data found for the last 24 weeks.")
 
@@ -152,18 +163,18 @@ def generate_llm_scenarios(**context):
         for f in sample.keys()
         if f
         not in (
-            "date",                      # scenario 테이블에서 partition key로 사용
+            "date",                      # used as partition key in scenario tables
             "target",
             "credit_delinquency_rate",
-            "year",                      # 인덱스/메타데이터
-            "week",                      # 인덱스/메타데이터
+            "year",                      # meta / index
+            "week",                      # meta / index
         )
     ]
 
     # ------------------------------------
     # 3. Prepare input text for the LLM
     # ------------------------------------
-    # 최근 기사 50개까지 사용
+    # Use up to 50 recent articles
     news_text = "\n\n".join(
         (
             f"[{n['published_at']}] {n['title']}\n"
@@ -183,9 +194,11 @@ def generate_llm_scenarios(**context):
     def call_llm_once():
         """
         Call the LLM once with the scenario-generation prompt.
-        Returns: list of row dicts, each row containing at least:
-          - "date"
-          - feature columns from feature_cols
+
+        Returns:
+            list of row dicts, each row containing at least:
+              - "date"
+              - all feature columns from feature_cols
         """
         system_prompt = """
 You are a financial macro scenario generator.
@@ -231,6 +244,7 @@ Return ONLY JSON, no explanation text.
 
         content_text = resp.choices[0].message.content
 
+        # Parse JSON strictly (LLM is instructed to return pure JSON)
         data = json.loads(content_text)
         rows = data.get("rows", [])
         if not rows:
@@ -313,8 +327,8 @@ Return ONLY JSON, no explanation text.
     )
 
     # Fetch table schemas to align field names
-    mean_table = BQ_CLIENT.get_table(mean_table_id)
-    std_table = BQ_CLIENT.get_table(std_table_id)
+    mean_table = bq_client.get_table(mean_table_id)
+    std_table = bq_client.get_table(std_table_id)
 
     mean_fields = [f.name for f in mean_table.schema]
     std_fields = [f.name for f in std_table.schema]
@@ -335,11 +349,11 @@ Return ONLY JSON, no explanation text.
         std_rows_bq.append(obj)
 
     # Insert into BigQuery
-    errors_mean = BQ_CLIENT.insert_rows_json(mean_table_id, mean_rows_bq)
+    errors_mean = bq_client.insert_rows_json(mean_table_id, mean_rows_bq)
     if errors_mean:
         raise RuntimeError(f"Error inserting rows into {mean_table_id}: {errors_mean}")
 
-    errors_std = BQ_CLIENT.insert_rows_json(std_table_id, std_rows_bq)
+    errors_std = bq_client.insert_rows_json(std_table_id, std_rows_bq)
     if errors_std:
         raise RuntimeError(f"Error inserting rows into {std_table_id}: {errors_std}")
 
