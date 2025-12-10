@@ -3,13 +3,22 @@
 # ============================================================
 
 import os
-import json
 from datetime import datetime
 import pandas as pd
 import numpy as np
 import streamlit as st
 import plotly.express as px
-from google.cloud import bigquery
+from utils.mlops_utils import (
+    parse_json,
+    safe_display,
+    get_bq_client,
+    extract_metrics,
+    extract_model_name,
+    format_datetime_column,
+    get_all_metrics_from_row,
+    METRIC_KEYS,
+    METRIC_KEY_MAPPING
+)
 
 # ------------------------------------------------------------
 # MAIN FUNCTION (CALL THIS FROM HOME PAGE)
@@ -27,66 +36,7 @@ def nlopsnew():
     TABLE_MODEL_VERSION = f"`{PROJECT_ID}.{DATASET_MLOPS}.model_version`"
     TABLE_DEPLOYMENT = f"`{PROJECT_ID}.{DATASET_MLOPS}.deployment`"
 
-    METRIC_KEYS = ["MAE", "R2", "SMAPE", "RMSE_RECENT6", "PEARSON_R", "MASE"]
-
-    # ------------------------------------------------------------
-    # HELPERS
-    # ------------------------------------------------------------
-    def parse_json(value):
-        if value is None:
-            return {}
-        if isinstance(value, dict):
-            return value
-        try:
-            return json.loads(value)
-        except:
-            return {}
-
-    def extract_metrics(df, col_name):
-    # initialize all metric columns
-        metric_map = {
-            "mae": "MAE",
-            "r2": "R2",
-            "smape": "SMAPE",
-            "rmse_recent6": "RMSE_RECENT6",
-            "pearson_r": "PEARSON_R",
-            "mase": "MASE"
-        }
-
-        # create empty columns
-        for col in metric_map.values():
-            df[col] = np.nan
-
-        # fill values from JSON
-        for idx, row in df.iterrows():
-            data = parse_json(row.get(col_name))
-            for key, val in data.items():
-                key_lower = key.lower()
-                if key_lower in metric_map:
-                    df.at[idx, metric_map[key_lower]] = val
-
-        return df
-
-
-    def extract_model_name(df, col_name):
-        df["model_name"] = None
-        for idx, row in df.iterrows():
-            params = parse_json(row.get(col_name))
-            if isinstance(params, dict) and "algorithm" in params:
-                df.at[idx, "model_name"] = params["algorithm"]
-        return df
-
-    def safe_display(x):
-        if x is None or (isinstance(x, float) and np.isnan(x)):
-            return "–"
-        return x
-
-    @st.cache_resource(show_spinner=False)
-    def get_bq_client():
-        try:
-            return bigquery.Client(project=PROJECT_ID)
-        except:
-            return None
+    # METRIC_KEYS imported from utils.mlops_utils
 
     # ------------------------------------------------------------
     # PAGE HEADER
@@ -97,7 +47,7 @@ def nlopsnew():
     # ------------------------------------------------------------
     # LOAD BIGQUERY DATA
     # ------------------------------------------------------------
-    client = get_bq_client()
+    client = get_bq_client(PROJECT_ID)
 
     df_train = client.query(f"SELECT * FROM {TABLE_TRAINING_RUN}").to_dataframe()
     df_versions = client.query(f"SELECT * FROM {TABLE_MODEL_VERSION}").to_dataframe()
@@ -128,11 +78,16 @@ def nlopsnew():
         )
         # Use model_name from training_run if available, otherwise use from model_version params
         if "model_name_from_train" in df_versions.columns:
+            # Fill model_name_from_train with model_name_from_params where missing
             df_versions["model_name"] = df_versions["model_name_from_train"].fillna(
-                df_versions.get("model_name_from_params", "")
+                df_versions["model_name_from_params"]
             )
             # Drop the intermediate columns
             df_versions = df_versions.drop(columns=["model_name_from_params", "model_name_from_train"], errors="ignore")
+        elif "model_name_from_params" in df_versions.columns:
+            # If only model_name_from_params exists, use it
+            df_versions["model_name"] = df_versions["model_name_from_params"]
+            df_versions = df_versions.drop(columns=["model_name_from_params"], errors="ignore")
     
     # deployment → add model_name from model_version
     df_deploy = df_deploy.merge(
@@ -203,26 +158,29 @@ def nlopsnew():
         st.subheader(" Overview / Model Registry 🏁")
 
         if best_model is not None:
-            model_name = best_model.get("model_name", "Unknown")
+            # Get model_name - best_model is a pandas Series from iloc[0]
+            model_name = None
+            if "model_name" in best_model.index:
+                model_name = best_model["model_name"]
+            
+            # If model_name is still None or empty, try to get from model_version_id
+            if not model_name or (isinstance(model_name, str) and model_name.lower() == "none") or pd.isna(model_name):
+                if "model_version_id" in best_model.index:
+                    model_version_id = best_model["model_version_id"]
+                    if model_version_id:
+                        # Try to get from df_versions
+                        version_match = df_versions[df_versions["model_version_id"] == model_version_id]
+                        if not version_match.empty and "model_name" in version_match.columns:
+                            model_name = version_match.iloc[0]["model_name"]
+            
+            # Final fallback
+            if not model_name or (isinstance(model_name, str) and model_name.lower() == "none") or pd.isna(model_name):
+                model_name = "Unknown Model"
+            
             st.markdown(f"#### 🏆 Best Model: **{model_name}**")
             
-            # Get all available metrics from the best_model
-            # First check the extracted metric columns
-            available_metrics = {}
-            for metric_key in METRIC_KEYS:
-                val = best_model.get(metric_key, None)
-                if val is not None and pd.notna(val):
-                    available_metrics[metric_key] = val
-            
-            # Also check the raw metrics JSON column if metrics weren't extracted or to get additional metrics
-            metrics_json_raw = best_model.get("metrics", None)
-            if metrics_json_raw:
-                metrics_json = parse_json(metrics_json_raw)
-                if metrics_json:
-                    # Add any metrics from JSON that aren't already in available_metrics
-                    for key, val in metrics_json.items():
-                        if key not in available_metrics and isinstance(val, (int, float)) and not pd.isna(val):
-                            available_metrics[key] = val
+            # Get all available metrics from the best_model using utils function
+            available_metrics = get_all_metrics_from_row(best_model, "metrics", METRIC_KEY_MAPPING)
             
             # Display metrics in columns (3 metrics per row)
             if available_metrics:
@@ -263,11 +221,7 @@ def nlopsnew():
         st.markdown("### Latest Model Comparison 🔍")
         
         # Format created_at for display and select only the columns we want
-        display_runs = latest_runs.copy()
-        if "created_at" in display_runs.columns:
-            display_runs["created_at"] = display_runs["created_at"].apply(
-                lambda x: x.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(x) else "–"
-            )
+        display_runs = format_datetime_column(latest_runs, "created_at")
         
         display_cols = ["model_name"] + METRIC_KEYS + ["created_at"]
         available_cols = [col for col in display_cols if col in display_runs.columns]
@@ -318,10 +272,7 @@ def nlopsnew():
             
             # Format created_at for display and select only the columns we want
             history_display = model_data.sort_values("created_at", ascending=False).head(10).copy()
-            if "created_at" in history_display.columns:
-                history_display["created_at"] = history_display["created_at"].apply(
-                    lambda x: x.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(x) else "–"
-                )
+            history_display = format_datetime_column(history_display, "created_at")
             
             display_cols = ["model_name"] + METRIC_KEYS + ["created_at"]
             available_cols = [col for col in display_cols if col in history_display.columns]
@@ -379,11 +330,7 @@ def nlopsnew():
             st.markdown("### Deployment Records 🟢")
             
             # Format deployed_at for display
-            deploy_display = df_deploy.copy()
-            if "deployed_at" in deploy_display.columns:
-                deploy_display["deployed_at"] = deploy_display["deployed_at"].apply(
-                    lambda x: x.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(x) else "–"
-                )
+            deploy_display = format_datetime_column(df_deploy, "deployed_at")
             
             st.dataframe(deploy_display, use_container_width=True, hide_index=True)
 
