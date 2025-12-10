@@ -336,67 +336,89 @@ def nlopsnew():
 
             st.markdown("#### Deployment History Timeline")
             try:
-                # Prepare data for timeline visualization
+                # Prepare data for timeline table
                 timeline_df = df_deploy.copy()
                 timeline_df = timeline_df.sort_values("deployed_at", ascending=True)
                 
                 # Mark active deployment
                 timeline_df["is_active"] = timeline_df["traffic_split"] > 0.0
-                timeline_df["status"] = timeline_df["is_active"].apply(lambda x: "Active" if x else "Inactive")
                 
-                # Create a timeline visualization
-                fig = px.scatter(
-                    timeline_df,
-                    x="deployed_at",
-                    y="model_name",
-                    color="status",
-                    size=[20] * len(timeline_df),  # Fixed size since traffic_split might not vary much
-                    hover_data=["deployment_id", "endpoint_url", "traffic_split", "deployed_at"],
-                    title="Model Deployment History",
-                    color_discrete_map={"Active": "#28a745", "Inactive": "#6c757d"},
-                    labels={
-                        "deployed_at": "Deployment Date & Time",
-                        "model_name": "Model Name",
-                        "status": "Deployment Status"
-                    }
+                # Format deployment date for display
+                timeline_df["deployment_date"] = timeline_df["deployed_at"].apply(
+                    lambda x: x.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(x) else ""
                 )
                 
-                fig.update_layout(
-                    xaxis_title="Deployment Date & Time",
-                    yaxis_title="Model Name",
-                    hovermode='closest',
-                    showlegend=True,
-                    legend=dict(
-                        title="Status",
-                        yanchor="top",
-                        y=0.99,
-                        xanchor="left",
-                        x=1.01
-                    )
-                )
+                # Get unique model names (columns) and deployment dates (rows)
+                unique_models = sorted(timeline_df["model_name"].dropna().unique())
+                unique_dates = timeline_df["deployment_date"].unique()
                 
-                # Add annotations for active deployment
-                active_deployments = timeline_df[timeline_df["is_active"]]
-                if not active_deployments.empty:
-                    for idx, row in active_deployments.iterrows():
-                        fig.add_annotation(
-                            x=row["deployed_at"],
-                            y=row["model_name"],
-                            text="✓ Active",
-                            showarrow=True,
-                            arrowhead=2,
-                            arrowcolor="#28a745",
-                            bgcolor="#28a745",
-                            bordercolor="#28a745",
-                            font=dict(color="white", size=10)
-                        )
-                
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Add summary information
-                active_count = timeline_df["is_active"].sum()
-                total_count = len(timeline_df)
-                st.caption(f"📊 Total deployments: {total_count} | 🟢 Active: {active_count} | ⚪ Inactive: {total_count - active_count}")
+                if len(unique_models) > 0 and len(unique_dates) > 0:
+                    # Create pivot table: rows = dates, columns = models
+                    timeline_table = pd.DataFrame(index=unique_dates, columns=unique_models)
+                    timeline_table = timeline_table.fillna("")  # Fill with empty strings
+                    
+                    # Store which cells are active for styling
+                    active_cells = {}
+                    
+                    # Fill in the table with deployment status
+                    for idx, row in timeline_df.iterrows():
+                        date_str = row["deployment_date"]
+                        model_name = row["model_name"]
+                        if pd.notna(model_name) and date_str in timeline_table.index:
+                            if row["is_active"]:
+                                timeline_table.at[date_str, model_name] = "✓ Active"
+                                active_cells[(date_str, model_name)] = True
+                            else:
+                                timeline_table.at[date_str, model_name] = "Inactive"
+                                active_cells[(date_str, model_name)] = False
+                    
+                    # Reset index to make deployment_date a column
+                    timeline_table = timeline_table.reset_index()
+                    timeline_table.columns.name = None
+                    timeline_table = timeline_table.rename(columns={"index": "Deployment Date"})
+                    
+                    # Create HTML table with green background for active cells
+                    html = "<table style='width:100%; border-collapse: collapse;'>"
+                    
+                    # Header row
+                    html += "<tr style='background-color: #f0f0f0; font-weight: bold;'>"
+                    for col in timeline_table.columns:
+                        html += f"<th style='padding: 8px; border: 1px solid #ddd; text-align: left;'>{col}</th>"
+                    html += "</tr>"
+                    
+                    # Data rows
+                    for idx, row in timeline_table.iterrows():
+                        html += "<tr>"
+                        for col in timeline_table.columns:
+                            cell_value = row[col] if pd.notna(row[col]) else ""
+                            date_str = row["Deployment Date"]
+                            
+                            # Style based on active status
+                            if col == "Deployment Date":
+                                html += f"<td style='padding: 8px; border: 1px solid #ddd;'>{cell_value}</td>"
+                            elif (date_str, col) in active_cells and active_cells[(date_str, col)]:
+                                # Green background for active
+                                html += f"<td style='padding: 8px; border: 1px solid #ddd; background-color: #28a745; color: white; font-weight: bold; text-align: center;'>{cell_value}</td>"
+                            elif cell_value == "Inactive":
+                                # Light gray for inactive
+                                html += f"<td style='padding: 8px; border: 1px solid #ddd; background-color: #f8f9fa; color: #6c757d; text-align: center;'>{cell_value}</td>"
+                            else:
+                                # Empty cell
+                                html += f"<td style='padding: 8px; border: 1px solid #ddd;'></td>"
+                        html += "</tr>"
+                    
+                    html += "</table>"
+                    
+                    # Display the HTML table
+                    st.markdown(html, unsafe_allow_html=True)
+                    
+                    # Add summary information
+                    active_count = timeline_df["is_active"].sum()
+                    total_count = len(timeline_df)
+                    st.caption(f"📊 Total deployments: {total_count} | 🟢 Active: {active_count} | ⚪ Inactive: {total_count - active_count}")
+                else:
+                    st.info("No deployment data available for timeline table.")
                 
             except Exception as e:
-                st.warning(f"Unable to generate timeline plot: {str(e)}")
+                st.warning(f"Unable to generate timeline table: {str(e)}")
+                st.error(f"Error details: {str(e)}")
