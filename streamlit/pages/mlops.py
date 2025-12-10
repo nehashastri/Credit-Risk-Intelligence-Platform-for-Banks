@@ -92,7 +92,7 @@ def nlopsnew():
     # PAGE HEADER
     # ------------------------------------------------------------
     st.title(" ML Lifecycle & Model Registry 🤖")
-    st.caption(" Powered by real MLOps BigQuery tables — no placeholder data.")
+    st.caption(" Powered by MLOps BigQuery tables.")
 
     # ------------------------------------------------------------
     # LOAD BIGQUERY DATA
@@ -116,6 +116,24 @@ def nlopsnew():
     df_versions = extract_model_name(df_versions, "params")
     df_versions = extract_metrics(df_versions, "metrics_json")
 
+    # Get model_name from training_run via model_version
+    # Link through run_id if available in model_version
+    if "run_id" in df_versions.columns and "run_id" in df_train.columns:
+        # Merge model_version with training_run to get model_name
+        df_versions = df_versions.merge(
+            df_train[["run_id", "model_name"]],
+            on="run_id",
+            how="left",
+            suffixes=("_from_params", "_from_train")
+        )
+        # Use model_name from training_run if available, otherwise use from model_version params
+        if "model_name_from_train" in df_versions.columns:
+            df_versions["model_name"] = df_versions["model_name_from_train"].fillna(
+                df_versions.get("model_name_from_params", "")
+            )
+            # Drop the intermediate columns
+            df_versions = df_versions.drop(columns=["model_name_from_params", "model_name_from_train"], errors="ignore")
+    
     # deployment → add model_name from model_version
     df_deploy = df_deploy.merge(
         df_versions[["model_version_id", "model_name"]],
@@ -185,15 +203,60 @@ def nlopsnew():
         st.subheader(" Overview / Model Registry 🏁")
 
         if best_model is not None:
-            col1, col2, col3, col4 = st.columns(4)
             model_name = best_model.get("model_name", "Unknown")
-            mae_val = best_model.get("MAE", None)
-            r2_val = best_model.get("R2", None)
+            st.markdown(f"#### 🏆 Best Model: **{model_name}**")
             
-            col1.metric(" Best Model", model_name)
-            col2.metric("Best MAE ↓", safe_display(round(mae_val, 3) if pd.notna(mae_val) else None))
-            col3.metric("Best R² ↑", safe_display(round(r2_val, 3) if pd.notna(r2_val) else None))
-            col4.metric("Status", "Currently Deployed")
+            # Get all available metrics from the best_model
+            # First check the extracted metric columns
+            available_metrics = {}
+            for metric_key in METRIC_KEYS:
+                val = best_model.get(metric_key, None)
+                if val is not None and pd.notna(val):
+                    available_metrics[metric_key] = val
+            
+            # Also check the raw metrics JSON column if metrics weren't extracted or to get additional metrics
+            metrics_json_raw = best_model.get("metrics", None)
+            if metrics_json_raw:
+                metrics_json = parse_json(metrics_json_raw)
+                if metrics_json:
+                    # Add any metrics from JSON that aren't already in available_metrics
+                    for key, val in metrics_json.items():
+                        if key not in available_metrics and isinstance(val, (int, float)) and not pd.isna(val):
+                            available_metrics[key] = val
+            
+            # Display metrics in columns (3 metrics per row)
+            if available_metrics:
+                # Filter out non-numeric metrics like test_count
+                numeric_metrics = {}
+                for key, val in available_metrics.items():
+                    if isinstance(val, (int, float)) and not pd.isna(val):
+                        # Skip test_count as it's not a performance metric
+                        if key.lower() != "test_count":
+                            numeric_metrics[key] = val
+                
+                if numeric_metrics:
+                    num_cols = 3
+                    metric_items = list(numeric_metrics.items())
+                    
+                    for i in range(0, len(metric_items), num_cols):
+                        cols = st.columns(num_cols)
+                        for j, (metric_name, metric_value) in enumerate(metric_items[i:i+num_cols]):
+                            if j < num_cols:
+                                with cols[j]:
+                                    # Format metric name for display
+                                    display_name = metric_name.replace("_", " ").title()
+                                    # Add arrows for better/worse indicators
+                                    metric_lower = metric_name.lower()
+                                    if metric_lower in ["mae", "smape", "rmse_recent6", "mase", "rmse"]:
+                                        display_name += " ↓"
+                                    elif metric_lower in ["r2", "pearson_r", "r²"]:
+                                        display_name += " ↑"
+                                    
+                                    st.metric(display_name, safe_display(round(metric_value, 4) if isinstance(metric_value, (int, float)) else metric_value))
+                else:
+                    st.info("No numeric metrics available for the deployed model.")
+            else:
+                st.info("No metrics available for the deployed model.")
         else:
             st.info("No active deployment found (traffic_split > 0).")
 
@@ -324,15 +387,69 @@ def nlopsnew():
             
             st.dataframe(deploy_display, use_container_width=True, hide_index=True)
 
-            st.markdown("#### Deployment Timeline")
+            st.markdown("#### Deployment History Timeline")
             try:
+                # Prepare data for timeline visualization
+                timeline_df = df_deploy.copy()
+                timeline_df = timeline_df.sort_values("deployed_at", ascending=True)
+                
+                # Mark active deployment
+                timeline_df["is_active"] = timeline_df["traffic_split"] > 0.0
+                timeline_df["status"] = timeline_df["is_active"].apply(lambda x: "Active" if x else "Inactive")
+                
+                # Create a timeline visualization
                 fig = px.scatter(
-                    df_deploy,
+                    timeline_df,
                     x="deployed_at",
                     y="model_name",
-                    size="traffic_split",
-                    hover_data=["endpoint_url", "deployment_id"]
+                    color="status",
+                    size=[20] * len(timeline_df),  # Fixed size since traffic_split might not vary much
+                    hover_data=["deployment_id", "endpoint_url", "traffic_split", "deployed_at"],
+                    title="Model Deployment History",
+                    color_discrete_map={"Active": "#28a745", "Inactive": "#6c757d"},
+                    labels={
+                        "deployed_at": "Deployment Date & Time",
+                        "model_name": "Model Name",
+                        "status": "Deployment Status"
+                    }
                 )
+                
+                fig.update_layout(
+                    xaxis_title="Deployment Date & Time",
+                    yaxis_title="Model Name",
+                    hovermode='closest',
+                    showlegend=True,
+                    legend=dict(
+                        title="Status",
+                        yanchor="top",
+                        y=0.99,
+                        xanchor="left",
+                        x=1.01
+                    )
+                )
+                
+                # Add annotations for active deployment
+                active_deployments = timeline_df[timeline_df["is_active"]]
+                if not active_deployments.empty:
+                    for idx, row in active_deployments.iterrows():
+                        fig.add_annotation(
+                            x=row["deployed_at"],
+                            y=row["model_name"],
+                            text="✓ Active",
+                            showarrow=True,
+                            arrowhead=2,
+                            arrowcolor="#28a745",
+                            bgcolor="#28a745",
+                            bordercolor="#28a745",
+                            font=dict(color="white", size=10)
+                        )
+                
                 st.plotly_chart(fig, use_container_width=True)
-            except:
-                st.warning("Unable to generate timeline plot.")
+                
+                # Add summary information
+                active_count = timeline_df["is_active"].sum()
+                total_count = len(timeline_df)
+                st.caption(f"📊 Total deployments: {total_count} | 🟢 Active: {active_count} | ⚪ Inactive: {total_count - active_count}")
+                
+            except Exception as e:
+                st.warning(f"Unable to generate timeline plot: {str(e)}")
