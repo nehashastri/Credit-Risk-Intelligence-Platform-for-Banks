@@ -1,7 +1,5 @@
 # ============================================================
 # STREAMLIT — ML LIFECYCLE & MODEL REGISTRY (REAL DATA VERSION)
-# Wrapped inside nlopsnew() for integration with Home router.
-# Supports your existing BigQuery tables exactly as they are.
 # ============================================================
 
 import os
@@ -110,6 +108,10 @@ def nlopsnew():
     # ------------------------------------------------------------
     df_train = extract_model_name(df_train, "params")
     df_train = extract_metrics(df_train, "metrics")
+    
+    # Parse created_at column to datetime (keep as datetime for sorting)
+    if "created_at" in df_train.columns:
+        df_train["created_at"] = pd.to_datetime(df_train["created_at"], errors="coerce")
 
     df_versions = extract_model_name(df_versions, "params")
     df_versions = extract_metrics(df_versions, "metrics_json")
@@ -120,10 +122,44 @@ def nlopsnew():
         on="model_version_id",
         how="left"
     )
+    
+    # Parse deployed_at column to datetime (keep as datetime for sorting)
+    if "deployed_at" in df_deploy.columns:
+        df_deploy["deployed_at"] = pd.to_datetime(df_deploy["deployed_at"], errors="coerce")
+    
+    # Parse created_at in df_versions for display
+    if "created_at" in df_versions.columns:
+        df_versions["created_at"] = pd.to_datetime(df_versions["created_at"], errors="coerce")
+    
+    # Extract metrics from deployment table
+    df_deploy = extract_metrics(df_deploy, "metrics")
 
     # ------------------------------------------------------------
-    # BEST MODEL CALCULATION
+    # BEST MODEL CALCULATION - FROM DEPLOYMENT TABLE
     # ------------------------------------------------------------
+    # Find the currently deployed model (traffic_split > 0.0)
+    if "traffic_split" in df_deploy.columns:
+        df_deploy["traffic_split"] = pd.to_numeric(df_deploy["traffic_split"], errors="coerce")
+        active_deployments = df_deploy[df_deploy["traffic_split"] > 0.0].copy()
+        
+        if not active_deployments.empty:
+            # Get the most recently deployed model with traffic_split > 0
+            active_deployments = active_deployments.sort_values("deployed_at", ascending=False)
+            best_model_row = active_deployments.iloc[0]
+            
+            # Convert metrics to numeric in the dataframe first
+            for m in METRIC_KEYS:
+                if m in active_deployments.columns:
+                    active_deployments[m] = pd.to_numeric(active_deployments[m], errors="coerce")
+            
+            # Get the best model row again after numeric conversion
+            best_model = active_deployments.iloc[0]
+        else:
+            best_model = None
+    else:
+        best_model = None
+    
+    # Keep latest_runs calculation for the comparison table
     df_train_clean = df_train.dropna(subset=["model_name"])
     df_train_clean = df_train_clean.sort_values("created_at", ascending=False)
 
@@ -131,11 +167,6 @@ def nlopsnew():
 
     for m in METRIC_KEYS:
         latest_runs[m] = pd.to_numeric(latest_runs[m], errors="coerce")
-
-    if not latest_runs.empty and latest_runs["MAE"].notna().any():
-        best_model = latest_runs.loc[latest_runs["MAE"].idxmin()]
-    else:
-        best_model = None
 
     # ------------------------------------------------------------
     # TABS
@@ -155,15 +186,29 @@ def nlopsnew():
 
         if best_model is not None:
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric(" Best Model", best_model["model_name"])
-            col2.metric("Best MAE ↓", safe_display(round(best_model["MAE"], 3)))
-            col3.metric("Best R² ↑", safe_display(round(best_model["R2"], 3)))
-            col4.metric("Status", "Best Recent Run")
+            model_name = best_model.get("model_name", "Unknown")
+            mae_val = best_model.get("MAE", None)
+            r2_val = best_model.get("R2", None)
+            
+            col1.metric(" Best Model", model_name)
+            col2.metric("Best MAE ↓", safe_display(round(mae_val, 3) if pd.notna(mae_val) else None))
+            col3.metric("Best R² ↑", safe_display(round(r2_val, 3) if pd.notna(r2_val) else None))
+            col4.metric("Status", "Currently Deployed")
         else:
-            st.info("No training runs found.")
+            st.info("No active deployment found (traffic_split > 0).")
 
         st.markdown("### Latest Model Comparison 🔍")
-        st.dataframe(latest_runs, use_container_width=True, hide_index=True)
+        
+        # Format created_at for display and select only the columns we want
+        display_runs = latest_runs.copy()
+        if "created_at" in display_runs.columns:
+            display_runs["created_at"] = display_runs["created_at"].apply(
+                lambda x: x.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(x) else "–"
+            )
+        
+        display_cols = ["model_name"] + METRIC_KEYS + ["created_at"]
+        available_cols = [col for col in display_cols if col in display_runs.columns]
+        st.dataframe(display_runs[available_cols], use_container_width=True, hide_index=True)
 
         try:
             comparison = latest_runs[["model_name", "MAE", "RMSE_RECENT6"]].dropna()
@@ -207,8 +252,18 @@ def nlopsnew():
                 cols[i % 6].metric(m, safe_display(latest_model[m]))
 
             st.markdown("#### Recent Training History")
+            
+            # Format created_at for display and select only the columns we want
+            history_display = model_data.sort_values("created_at", ascending=False).head(10).copy()
+            if "created_at" in history_display.columns:
+                history_display["created_at"] = history_display["created_at"].apply(
+                    lambda x: x.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(x) else "–"
+                )
+            
+            display_cols = ["model_name"] + METRIC_KEYS + ["created_at"]
+            available_cols = [col for col in display_cols if col in history_display.columns]
             st.dataframe(
-                model_data.sort_values("created_at", ascending=False).head(10),
+                history_display[available_cols],
                 use_container_width=True, hide_index=True
             )
 
@@ -259,7 +314,15 @@ def nlopsnew():
             st.info("No deployments found.")
         else:
             st.markdown("### Deployment Records 🟢")
-            st.dataframe(df_deploy, use_container_width=True, hide_index=True)
+            
+            # Format deployed_at for display
+            deploy_display = df_deploy.copy()
+            if "deployed_at" in deploy_display.columns:
+                deploy_display["deployed_at"] = deploy_display["deployed_at"].apply(
+                    lambda x: x.strftime("%Y-%m-%d %H:%M:%S") if pd.notna(x) else "–"
+                )
+            
+            st.dataframe(deploy_display, use_container_width=True, hide_index=True)
 
             st.markdown("#### Deployment Timeline")
             try:
