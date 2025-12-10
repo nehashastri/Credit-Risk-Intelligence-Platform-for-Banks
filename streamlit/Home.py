@@ -158,8 +158,7 @@ def main():
         "🏠 Home",
         "📊 Data Overview",
         "🔍 Exploratory Data Analysis",
-        "🤖 ML Lifecycle / Model Registry",
-        "🤖 ML Ops new",
+        "🤖 ML Ops and  Model Registry",
         "📈 Scenario Forecast",
         ]
     )
@@ -194,13 +193,7 @@ def main():
             show_exploratory_data_analysis()
         except Exception as e:
             st.error(f"Error loading Exploratory Data Analysis page: {str(e)}")
-    elif page == "🤖 ML Lifecycle / Model Registry":
-        try:
-            from pages.ml_lifecycle import show_ml_lifecycle
-            show_ml_lifecycle()
-        except Exception as e:
-            st.error(f"Error loading ML Lifecycle page: {str(e)}")
-    elif page == "🤖 ML Ops new":
+    elif page == "🤖 ML Ops and  Model Registry":
         try:
             from pages.mlops import nlopsnew
             nlopsnew()
